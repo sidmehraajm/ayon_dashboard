@@ -1,0 +1,3 @@
+fastapi
+uvicorn
+ayon-python-api

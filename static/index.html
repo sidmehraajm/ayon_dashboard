@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ayon Production Terminal</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/dist/ag-grid-enterprise.min.js"></script>
+    
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>Ayon Terminal</h1>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('assets')">Asset Matrix</button>
+                <button class="tab-btn" onclick="switchTab('artists')">Artist Telemetry</button>
+            </div>
+        </div>
+        <div id="project-health-summary">Loading Connection...</div>
+    </header>
+
+    <main>
+        <section id="tab-assets" class="view-section active">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Active Project</label>
+                    <select id="asset-project-selector" class="premium-input"></select>
+                </div>
+                
+                <div class="control-group">
+                    <label>Asset Search</label>
+                    <input list="asset-list" id="asset-search" class="premium-input" placeholder="Query asset name...">
+                    <datalist id="asset-list"></datalist>
+                </div>
+
+                <div class="control-group">
+                    <label>Target Criteria (Complete)</label>
+                    <div class="custom-dropdown">
+                        <button class="premium-input dropdown-btn" id="status-dropdown-btn" onclick="toggleStatusDropdown()">Select Statuses ▼</button>
+                        <div class="dropdown-content" id="status-checkboxes">
+                            </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="trackingGrid" class="ag-theme-alpine-dark" style="height: 650px; width: 100%;"></div>
+        </section>
+
+        <section id="tab-artists" class="view-section" style="display: none;">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Project Scope</label>
+                    <select id="artist-project-selector" class="premium-input" multiple style="height: 80px; width: 250px;"></select>
+                    <button class="action-btn" onclick="loadArtistData()">Execute Query</button>
+                </div>
+                <div class="control-group">
+                    <label>Filter Artist</label>
+                    <select id="artist-selector" class="premium-input">
+                        <option value="ALL">-- Global View --</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="chart-container" style="height: 550px;">
+                <canvas id="artistChart"></canvas>
+            </div>
+        </section>
+    </main>
+
+    <div id="artist-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Artist Publishes</h2>
+                <button class="close-btn" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <table class="premium-table" id="modal-table">
+                    <thead>
+                        <tr>
+                            <th>Project</th>
+                            <th>Version</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modal-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/main.js"></script>
+</body>
+</html>
