@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ayon Production Terminal</title>
-    
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/dist/ag-grid-enterprise.min.js"></script>
-    
     <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
     <header>
         <div class="header-left">
@@ -17,6 +17,7 @@
             <div class="tabs">
                 <button class="tab-btn active" onclick="switchTab('assets')">Asset Matrix</button>
                 <button class="tab-btn" onclick="switchTab('artists')">Artist Telemetry</button>
+                <button class="tab-btn" onclick="switchTab('daily')">Day Report</button>
             </div>
         </div>
         <div id="project-health-summary">Loading Connection...</div>
@@ -29,23 +30,19 @@
                     <label>Active Project</label>
                     <select id="asset-project-selector" class="premium-input"></select>
                 </div>
-                
                 <div class="control-group">
                     <label>Asset Search</label>
                     <input list="asset-list" id="asset-search" class="premium-input" placeholder="Query asset name...">
                     <datalist id="asset-list"></datalist>
                 </div>
-
                 <div class="control-group">
                     <label>Target Criteria (Complete)</label>
                     <div class="custom-dropdown">
                         <button class="premium-input dropdown-btn" id="status-dropdown-btn" onclick="toggleStatusDropdown()">Select Statuses ▼</button>
-                        <div class="dropdown-content" id="status-checkboxes">
-                            </div>
+                        <div class="dropdown-content" id="status-checkboxes"></div>
                     </div>
                 </div>
             </div>
-
             <div id="trackingGrid" class="ag-theme-alpine-dark" style="height: 650px; width: 100%;"></div>
         </section>
 
@@ -53,7 +50,7 @@
             <div class="controls-bar">
                 <div class="control-group">
                     <label>Project Scope</label>
-                    <select id="artist-project-selector" class="premium-input" multiple style="height: 80px; width: 250px;"></select>
+                    <select id="artist-project-selector" class="premium-input" multiple style="height: 80px; width: 220px;"></select>
                     <button class="action-btn" onclick="loadArtistData()">Execute Query</button>
                 </div>
                 <div class="control-group">
@@ -62,11 +59,33 @@
                         <option value="ALL">-- Global View --</option>
                     </select>
                 </div>
+                <div class="control-group">
+                    <label>Target Asset</label>
+                    <select id="artist-asset-filter" class="premium-input">
+                        <option value="ALL">-- All Assets --</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Task Status</label>
+                    <select id="artist-status-filter" class="premium-input">
+                        <option value="ALL">-- All Statuses --</option>
+                    </select>
+                </div>
             </div>
-
             <div class="chart-container" style="height: 550px;">
                 <canvas id="artistChart"></canvas>
             </div>
+        </section>
+
+        <section id="tab-daily" class="view-section" style="display: none;">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Target Projects</label>
+                    <select id="daily-project-selector" class="premium-input" multiple style="height: 80px; width: 250px;"></select>
+                    <button class="action-btn" onclick="loadDailyReport()">Generate Report</button>
+                </div>
+            </div>
+            <div id="daily-report-container" class="report-container"></div>
         </section>
     </main>
 
@@ -81,9 +100,11 @@
                     <thead>
                         <tr>
                             <th>Project</th>
+                            <th>Asset Path</th>
+                            <th>Task</th>
                             <th>Version</th>
                             <th>Status</th>
-                            <th>Date</th>
+                            <th>Link</th>
                         </tr>
                     </thead>
                     <tbody id="modal-tbody"></tbody>
@@ -94,4 +115,5 @@
 
     <script src="/static/main.js"></script>
 </body>
+
 </html>

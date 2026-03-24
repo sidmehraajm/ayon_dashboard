@@ -1,11 +1,20 @@
+// --- AYON CONFIGURATION ---
+const AYON_BASE_URL = "http://ayon:5000"; // Ensure this matches your local network setup
+
 let gridApi = null;
 let chartInstance = null;
 let globalRawTrackingData = {}; 
 let allProjects = [];
 
+// Global states for Artist filtering
+let currentArtistData = {};
+let filteredModalData = {}; 
+let currentProjectStatuses = []; 
+
 document.addEventListener("DOMContentLoaded", async () => {
     await loadProjects();
     
+    // Asset Typing Search
     document.getElementById('asset-search').addEventListener('input', async (e) => {
         if (gridApi) {
             const filterInstance = await gridApi.getColumnFilterInstance('assetName');
@@ -14,12 +23,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     });
 
-    document.getElementById('artist-selector').addEventListener('change', filterArtistChart);
+    // Advanced Artist Filters
+    document.getElementById('artist-selector').addEventListener('change', applyArtistFilters);
+    document.getElementById('artist-asset-filter').addEventListener('change', applyArtistFilters);
+    document.getElementById('artist-status-filter').addEventListener('change', applyArtistFilters);
     
-    // Close dropdown when clicking outside
+    // Close Custom Dropdown on Outside Click
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.custom-dropdown')) {
-            document.getElementById('status-checkboxes').classList.remove('show');
+            const cb = document.getElementById('status-checkboxes');
+            if(cb) cb.classList.remove('show');
         }
     });
 });
@@ -31,19 +44,29 @@ function switchTab(tabId) {
     event.target.classList.add('active');
 }
 
+// Generates direct deep links to the Ayon Web Interface
+function generateAyonLink(projectName, folderId, taskId) {
+    if (!folderId || !taskId) return "#";
+    return `${AYON_BASE_URL}/projects/${projectName}/browser?folder=${folderId}&task=${taskId}`;
+}
+
 async function loadProjects() {
     try {
         const response = await fetch("/api/projects");
         allProjects = await response.json();
+        
         const assetSelector = document.getElementById("asset-project-selector");
         const artistSelector = document.getElementById("artist-project-selector");
+        const dailySelector = document.getElementById("daily-project-selector");
         
         allProjects.forEach(proj => {
             assetSelector.innerHTML += `<option value="${proj}">${proj}</option>`;
             artistSelector.innerHTML += `<option value="${proj}">${proj}</option>`;
+            dailySelector.innerHTML += `<option value="${proj}">${proj}</option>`;
         });
 
         artistSelector.innerHTML = `<option value="ALL" selected>-- ALL PROJECTS --</option>` + artistSelector.innerHTML;
+        dailySelector.innerHTML = `<option value="ALL" selected>-- ALL PROJECTS --</option>` + dailySelector.innerHTML;
 
         if (allProjects.length > 0) {
             loadTrackingData(allProjects[0]);
@@ -55,19 +78,16 @@ async function loadProjects() {
 }
 
 // ==========================================
-// ASSET TRACKING & CUSTOM DROPDOWN
+// ASSET TRACKING (Master-Detail Grid)
 // ==========================================
 async function loadTrackingData(projectName) {
     document.getElementById("project-health-summary").innerText = "Establishing secure connection...";
     try {
         const response = await fetch(`/api/metrics/tracking/${projectName}`);
         globalRawTrackingData = await response.json();
-        
         populateAssetSearchDropdown();
         buildStatusCheckboxes(); 
-    } catch (error) {
-        console.error("Tracking Data Error:", error);
-    }
+    } catch (error) { console.error(error); }
 }
 
 function populateAssetSearchDropdown() {
@@ -78,9 +98,7 @@ function populateAssetSearchDropdown() {
     });
 }
 
-function toggleStatusDropdown() {
-    document.getElementById('status-checkboxes').classList.toggle('show');
-}
+function toggleStatusDropdown() { document.getElementById('status-checkboxes').classList.toggle('show'); }
 
 function buildStatusCheckboxes() {
     const allStatuses = new Set();
@@ -92,39 +110,26 @@ function buildStatusCheckboxes() {
     container.innerHTML = "";
 
     Array.from(allStatuses).sort().forEach(status => {
-        // Auto-check statuses that seem like a completion state
         const s = status.toLowerCase();
         const isChecked = s.includes('approve') || s.includes('final') || s.includes('done') || s.includes('deliver') ? 'checked' : '';
-        
-        container.innerHTML += `
-            <label class="dropdown-item">
-                <input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()">
-                ${status}
-            </label>
-        `;
+        container.innerHTML += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
     });
-
     recalculateHealth();
 }
 
 function getSelectedStatuses() {
-    const checkboxes = document.querySelectorAll('#status-checkboxes input:checked');
-    return Array.from(checkboxes).map(cb => cb.value.toLowerCase());
+    return Array.from(document.querySelectorAll('#status-checkboxes input:checked')).map(cb => cb.value.toLowerCase());
 }
 
-// DATE MATH HELPER
 function calculateDelay(endDateStr, updatedAtStr) {
     if (!endDateStr) return { text: "N/A", color: "" };
     if (!updatedAtStr) return { text: "Pending", color: "" };
     
-    const end = new Date(endDateStr);
-    const updated = new Date(updatedAtStr);
-    
-    const diffTime = updated - end;
+    const diffTime = new Date(updatedAtStr) - new Date(endDateStr);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
-    if (diffDays <= 0) return { text: "On Time", color: "#10b981" }; // Green
-    return { text: `${diffDays} Days Late`, color: "#ef4444" }; // Red
+    if (diffDays <= 0) return { text: "On Time", color: "#10b981" };
+    return { text: `${diffDays} Days Late`, color: "#ef4444" };
 }
 
 function recalculateHealth() {
@@ -139,11 +144,7 @@ function recalculateHealth() {
 
         if (folder.tasks) {
             folder.tasks.forEach(task => {
-                if (completedStatuses.includes(task.status.toLowerCase())) {
-                    completedTasks++;
-                }
-                
-                // Calculate delay for each task
+                if (completedStatuses.includes(task.status.toLowerCase())) completedTasks++;
                 const delayData = calculateDelay(task.end_date, task.updated_at);
                 task.delay_text = delayData.text;
                 task.delay_color = delayData.color;
@@ -154,27 +155,19 @@ function recalculateHealth() {
         totalTasksGlobal += totalTasks;
         completedTasksGlobal += completedTasks;
 
-        rowData.push({
-            assetName: folder.name,
-            assetType: folder.type,
-            health: health,
-            tasks: folder.tasks || [] 
-        });
+        rowData.push({ assetName: folder.name, assetType: folder.type, health: health, tasks: folder.tasks || [] });
     });
 
     const globalHealth = totalTasksGlobal > 0 ? Math.round((completedTasksGlobal / totalTasksGlobal) * 100) : 0;
-    document.getElementById("project-health-summary").innerHTML = 
-        `Global Project Completion: <span style="color: var(--accent-green);">${globalHealth}%</span>`;
-
+    document.getElementById("project-health-summary").innerHTML = `Global Project Completion: <span style="color: var(--accent-green);">${globalHealth}%</span>`;
     renderMasterDetailGrid(rowData);
 }
 
 function renderMasterDetailGrid(rowData) {
     const gridDiv = document.querySelector('#trackingGrid');
-    if (gridApi) {
-        gridApi.setGridOption('rowData', rowData);
-        return;
-    }
+    if (gridApi) { gridApi.setGridOption('rowData', rowData); return; }
+
+    const activeProject = document.getElementById("asset-project-selector").value;
 
     const gridOptions = {
         rowData: rowData,
@@ -186,26 +179,22 @@ function renderMasterDetailGrid(rowData) {
                     { field: 'task_name', headerName: 'Task Name', flex: 1 },
                     { field: 'assignees', valueFormatter: p => p.value && p.value.length > 0 ? p.value.join(', ') : 'Unassigned', flex: 1 },
                     { 
-                        field: 'status', 
-                        flex: 1,
+                        field: 'status', flex: 1,
                         cellRenderer: params => {
                             const val = params.value ? params.value.toLowerCase() : '';
                             if (val.includes('approve') || val.includes('final')) return `<span class="status-pill pill-green">${params.value}</span>`;
                             if (val.includes('progress') || val.includes('wip')) return `<span class="status-pill pill-yellow">${params.value}</span>`;
-                            return `<span class="status-pill" style="border: 1px solid #444">${params.value}</span>`;
+                            return `<span class="status-pill" style="border: 1px solid var(--panel-border)">${params.value}</span>`;
                         }
                     },
-                    { 
-                        field: 'end_date', 
-                        headerName: 'Target End Date',
-                        valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : 'N/A',
-                        flex: 1 
-                    },
+                    { field: 'end_date', headerName: 'Target Date', valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : 'N/A', flex: 1 },
+                    { field: 'delay_text', headerName: 'Delivery', flex: 1, cellStyle: params => ({ color: params.data.delay_color, fontWeight: 'bold' }) },
                     {
-                        field: 'delay_text',
-                        headerName: 'Delivery Status',
-                        flex: 1,
-                        cellStyle: params => ({ color: params.data.delay_color, fontWeight: 'bold' })
+                        headerName: 'Action', flex: 0.5,
+                        cellRenderer: params => {
+                            const link = generateAyonLink(activeProject, params.data.folder_id, params.data.task_id);
+                            return `<a href="${link}" target="_blank" class="ayon-link">Open ↗</a>`;
+                        }
                     }
                 ],
                 theme: "ag-theme-alpine-dark",
@@ -216,10 +205,7 @@ function renderMasterDetailGrid(rowData) {
             { field: "assetName", headerName: "Asset Name", cellRenderer: 'agGroupCellRenderer', flex: 2 },
             { field: "assetType", headerName: "Type", flex: 1 },
             { 
-                field: "health", 
-                headerName: "Completion Status", 
-                flex: 1, 
-                valueFormatter: p => p.value + "%",
+                field: "health", headerName: "Completion Status", flex: 1, valueFormatter: p => p.value + "%",
                 cellStyle: params => {
                     if (params.value === 100) return { color: 'var(--accent-green)', fontWeight: 'bold' };
                     if (params.value > 0) return { color: 'var(--accent-blue)' };
@@ -229,15 +215,12 @@ function renderMasterDetailGrid(rowData) {
         ],
         defaultColDef: { sortable: true, filter: true }
     };
-
     gridApi = agGrid.createGrid(gridDiv, gridOptions);
 }
 
 // ==========================================
-// ARTIST ANALYTICS & MODAL
+// ARTIST ANALYTICS, FILTERING & MODAL
 // ==========================================
-let currentArtistData = {};
-
 async function loadArtistData() {
     const selector = document.getElementById("artist-project-selector");
     let selectedProjects = Array.from(selector.selectedOptions).map(opt => opt.value);
@@ -246,36 +229,84 @@ async function loadArtistData() {
 
     try {
         const response = await fetch("/api/metrics/artists", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projects: selectedProjects })
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: selectedProjects })
         });
         
-        currentArtistData = await response.json();
+        const payload = await response.json();
         
-        const artistDropdown = document.getElementById("artist-selector");
-        artistDropdown.innerHTML = `<option value="ALL">-- Global View --</option>`;
-        Object.keys(currentArtistData).sort().forEach(artist => {
-            artistDropdown.innerHTML += `<option value="${artist}">${artist}</option>`;
-        });
-
-        filterArtistChart();
-    } catch (error) {
-        console.error("Artist Data Error:", error);
-    }
+        // Map the correct payload structure from backend
+        currentArtistData = payload.artists;
+        currentProjectStatuses = payload.all_statuses;
+        
+        populateArtistDropdowns();
+        applyArtistFilters();
+    } catch (error) { console.error("Artist Data Error:", error); }
 }
 
-function filterArtistChart() {
+function populateArtistDropdowns() {
+    const artistDropdown = document.getElementById("artist-selector");
+    const assetDropdown = document.getElementById("artist-asset-filter");
+    const statusDropdown = document.getElementById("artist-status-filter");
+
+    const uniqueAssets = new Set();
+
+    // 1. Populate Artist Dropdown
+    artistDropdown.innerHTML = `<option value="ALL">-- Global View --</option>`;
+    Object.keys(currentArtistData).sort().forEach(artist => {
+        artistDropdown.innerHTML += `<option value="${artist}">${artist}</option>`;
+        currentArtistData[artist].publishes.forEach(pub => {
+            if (pub.asset_path) uniqueAssets.add(pub.asset_path);
+        });
+    });
+
+    // 2. Populate Asset Dropdown
+    assetDropdown.innerHTML = `<option value="ALL">-- All Assets --</option>`;
+    Array.from(uniqueAssets).sort().forEach(asset => {
+        const shortName = asset.split('/').slice(-2).join('/');
+        assetDropdown.innerHTML += `<option value="${asset}">${shortName}</option>`;
+    });
+
+    // 3. Populate Status Dropdown (Using official Ayon Schema)
+    statusDropdown.innerHTML = `<option value="ALL">-- All Statuses --</option>`;
+    currentProjectStatuses.forEach(status => {
+        statusDropdown.innerHTML += `<option value="${status}">${status}</option>`;
+    });
+}
+
+function applyArtistFilters() {
     const selectedArtist = document.getElementById("artist-selector").value;
-    let dataToRender = currentArtistData;
+    const selectedAsset = document.getElementById("artist-asset-filter").value;
+    const selectedStatus = document.getElementById("artist-status-filter").value;
 
-    if (selectedArtist !== "ALL" && currentArtistData[selectedArtist]) {
-        dataToRender = { [selectedArtist]: currentArtistData[selectedArtist] };
-    }
+    const labels = [];
+    const publishCounts = [];
+    filteredModalData = {}; 
 
+    Object.keys(currentArtistData).sort().forEach(artist => {
+        if (selectedArtist !== "ALL" && artist !== selectedArtist) return;
+
+        let validPublishes = currentArtistData[artist].publishes;
+
+        if (selectedAsset !== "ALL") {
+            validPublishes = validPublishes.filter(p => p.asset_path === selectedAsset);
+        }
+
+        if (selectedStatus !== "ALL") {
+            validPublishes = validPublishes.filter(p => p.status === selectedStatus);
+        }
+
+        if (validPublishes.length > 0) {
+            labels.push(artist);
+            publishCounts.push(validPublishes.length);
+            filteredModalData[artist] = validPublishes; 
+        }
+    });
+
+    renderArtistChart(labels, publishCounts);
+}
+
+function renderArtistChart(labels, publishCounts) {
     const ctx = document.getElementById('artistChart').getContext('2d');
-    const labels = Object.keys(dataToRender);
-    const publishCounts = labels.map(a => dataToRender[a].total_publishes);
 
     if (chartInstance) chartInstance.destroy();
 
@@ -284,28 +315,22 @@ function filterArtistChart() {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Total Versions Published',
+                label: 'Filtered Iterations', 
                 data: publishCounts,
-                backgroundColor: 'rgba(59, 130, 246, 0.8)',
-                borderColor: '#3b82f6',
-                borderWidth: 1,
-                borderRadius: 4
+                backgroundColor: 'rgba(59, 130, 246, 0.8)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 4
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            responsive: true, maintainAspectRatio: false,
             scales: { 
-                y: { beginAtZero: true, grid: { color: '#2d313f' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#e2e8f0' } }
+                y: { beginAtZero: true, grid: { color: '#2d313f' }, ticks: { color: '#94a3b8' } }, 
+                x: { grid: { display: false }, ticks: { color: '#e2e8f0' } } 
             },
-            plugins: { legend: { display: false } },
-            // CLICK EVENT FOR DRILL-DOWN MODAL
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' Iterations'; } } } },
             onClick: (event, elements) => {
                 if (elements.length > 0) {
                     const index = elements[0].index;
-                    const artistName = labels[index];
-                    openArtistModal(artistName);
+                    openArtistModal(labels[index]);
                 }
             }
         }
@@ -313,33 +338,108 @@ function filterArtistChart() {
 }
 
 function openArtistModal(artistName) {
-    document.getElementById('modal-title').innerText = `${artistName} - Publish History`;
+    document.getElementById('modal-title').innerText = `${artistName} - Filtered Iterations`;
     const tbody = document.getElementById('modal-tbody');
     tbody.innerHTML = "";
     
-    const publishes = currentArtistData[artistName].publishes;
+    const publishes = filteredModalData[artistName] || [];
     
     if (publishes.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='4'>No recent publishes found.</td></tr>";
+        tbody.innerHTML = "<tr><td colspan='6'>No iterations found matching current filters.</td></tr>";
     } else {
         publishes.forEach(pub => {
             const dateStr = pub.date ? new Date(pub.date).toLocaleString() : "N/A";
             const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
+            const ayonLink = generateAyonLink(pub.project, pub.folder_id, pub.task_id);
             
             tbody.innerHTML += `
                 <tr>
                     <td>${pub.project}</td>
+                    <td style="color: var(--text-secondary); font-family: monospace;">${pub.asset_path}</td>
+                    <td>${pub.task}</td>
                     <td><span style="color: var(--accent-blue); font-weight: bold;">${pub.version}</span></td>
                     <td><span class="status-pill ${statusClass}">${pub.status}</span></td>
-                    <td>${dateStr}</td>
+                    <td><a href="${ayonLink}" target="_blank" class="ayon-link">Open ↗</a></td>
                 </tr>
             `;
         });
     }
-    
     document.getElementById('artist-modal').style.display = 'flex';
 }
 
-function closeModal() {
-    document.getElementById('artist-modal').style.display = 'none';
+function closeModal() { document.getElementById('artist-modal').style.display = 'none'; }
+
+// ==========================================
+// DAILY REPORT
+// ==========================================
+async function loadDailyReport() {
+    const selector = document.getElementById("daily-project-selector");
+    let selectedProjects = Array.from(selector.selectedOptions).map(opt => opt.value);
+    if (selectedProjects.includes("ALL")) selectedProjects = allProjects;
+
+    const container = document.getElementById("daily-report-container");
+    container.innerHTML = "<h3 style='color: var(--text-secondary); text-align: center;'>Compiling Daily Telemetry...</h3>";
+
+    try {
+        const response = await fetch("/api/metrics/daily", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: selectedProjects })
+        });
+        
+        const reportData = await response.json();
+        container.innerHTML = "";
+
+        if (Object.keys(reportData).length === 0) {
+            container.innerHTML = "<h3 style='color: var(--text-secondary); text-align: center;'>No publishes detected in the last 24 hours.</h3>";
+            return;
+        }
+
+        Object.keys(reportData).forEach(project => {
+            const projData = reportData[project];
+            let rowsHtml = "";
+            
+            projData.publishes.forEach(pub => {
+                const dateStr = pub.date ? new Date(pub.date).toLocaleTimeString() : "N/A";
+                const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
+                const ayonLink = generateAyonLink(project, pub.folder_id, pub.task_id);
+
+                rowsHtml += `
+                    <tr>
+                        <td><strong>${pub.author}</strong></td>
+                        <td style="font-family: monospace; color: var(--text-secondary);">${pub.asset_path}</td>
+                        <td>${pub.task}</td>
+                        <td style="color: var(--accent-blue); font-weight: bold;">${pub.version}</td>
+                        <td><span class="status-pill ${statusClass}">${pub.status}</span></td>
+                        <td>${dateStr}</td>
+                        <td><a href="${ayonLink}" target="_blank" class="ayon-link">View ↗</a></td>
+                    </tr>
+                `;
+            });
+
+            container.innerHTML += `
+                <div class="project-report-card">
+                    <div class="report-header">
+                        <h3>${project}</h3>
+                        <span class="publish-count">${projData.total_publishes} Publishes (Last 24h)</span>
+                    </div>
+                    <table class="premium-table">
+                        <thead>
+                            <tr>
+                                <th>Artist</th>
+                                <th>Asset Path</th>
+                                <th>Task</th>
+                                <th>Version</th>
+                                <th>Status</th>
+                                <th>Time</th>
+                                <th>Link</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            `;
+        });
+    } catch (error) {
+        console.error("Daily Report Error:", error);
+        container.innerHTML = "<h3 style='color: var(--accent-red);'>Failed to load report.</h3>";
+    }
 }

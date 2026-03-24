@@ -31,3 +31,8 @@ def get_tracking(project_name: str):
 def get_artist_metrics(payload: ProjectListPayload):
     """Accepts multiple projects to aggregate artist data."""
     return extractor.get_artist_metrics(payload.projects)
+
+@app.post("/api/metrics/daily")
+def get_daily_report(payload: ProjectListPayload):
+    """Endpoint for the Daily Report Module."""
+    return extractor.get_daily_report(payload.projects)
