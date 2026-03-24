@@ -14,12 +14,15 @@ let currentProjectStatuses = [];
 document.addEventListener("DOMContentLoaded", async () => {
     await loadProjects();
     
-    // Asset Typing Search
+    // FIXED: Bulletproof Asset Typing Search
     document.getElementById('asset-search').addEventListener('input', async (e) => {
         if (gridApi) {
             const filterInstance = await gridApi.getColumnFilterInstance('assetName');
-            e.target.value.trim() === '' ? filterInstance.setModel(null) : filterInstance.setModel({ type: 'contains', filter: e.target.value });
-            gridApi.onFilterChanged();
+            if (filterInstance) {
+                const val = e.target.value.trim();
+                filterInstance.setModel(val === '' ? null : { type: 'contains', filter: val });
+                gridApi.onFilterChanged();
+            }
         }
     });
 
@@ -80,14 +83,20 @@ async function loadProjects() {
 // ==========================================
 // ASSET TRACKING (Master-Detail Grid)
 // ==========================================
+let currentTrackingStatuses = []; // Store official project statuses
+
 async function loadTrackingData(projectName) {
     document.getElementById("project-health-summary").innerText = "Establishing secure connection...";
     try {
         const response = await fetch(`/api/metrics/tracking/${projectName}`);
-        globalRawTrackingData = await response.json();
+        const payload = await response.json();
+        
+        globalRawTrackingData = payload.tracking_data;
+        currentTrackingStatuses = payload.all_statuses; // The official statuses from Ayon
+        
         populateAssetSearchDropdown();
         buildStatusCheckboxes(); 
-    } catch (error) { console.error(error); }
+    } catch (error) { console.error("Tracking Data Error:", error); }
 }
 
 function populateAssetSearchDropdown() {
@@ -101,18 +110,19 @@ function populateAssetSearchDropdown() {
 function toggleStatusDropdown() { document.getElementById('status-checkboxes').classList.toggle('show'); }
 
 function buildStatusCheckboxes() {
-    const allStatuses = new Set();
-    Object.values(globalRawTrackingData).forEach(folder => {
-        if (folder.tasks) folder.tasks.forEach(t => allStatuses.add(t.status));
-    });
-
     const container = document.getElementById('status-checkboxes');
     container.innerHTML = "";
 
-    Array.from(allStatuses).sort().forEach(status => {
+    const bulkSelect = document.getElementById('bulk-status-select');
+    if (bulkSelect) bulkSelect.innerHTML = '<option value="">-- Do Not Change Status --</option>';
+
+    // Build the lists using the OFFICIAL statuses from the schema
+    currentTrackingStatuses.forEach(status => {
         const s = status.toLowerCase();
         const isChecked = s.includes('approve') || s.includes('final') || s.includes('done') || s.includes('deliver') ? 'checked' : '';
+        
         container.innerHTML += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
+        if (bulkSelect) bulkSelect.innerHTML += `<option value="${status}">${status}</option>`;
     });
     recalculateHealth();
 }
@@ -173,10 +183,14 @@ function renderMasterDetailGrid(rowData) {
         rowData: rowData,
         theme: "ag-theme-alpine-dark",
         masterDetail: true,
+        rowSelection: 'multiple', // ENABLE MASTER ROW SELECTION (ASSETS)
+        onSelectionChanged: handleTaskSelection, // Listener for Asset Selection
         detailCellRendererParams: {
             detailGridOptions: {
+                rowSelection: 'multiple', 
+                onSelectionChanged: handleTaskSelection, // Listener for Task Selection
                 columnDefs: [
-                    { field: 'task_name', headerName: 'Task Name', flex: 1 },
+                    { field: 'task_name', headerName: 'Task Name', flex: 1.5, checkboxSelection: true, headerCheckboxSelection: true },
                     { field: 'assignees', valueFormatter: p => p.value && p.value.length > 0 ? p.value.join(', ') : 'Unassigned', flex: 1 },
                     { 
                         field: 'status', flex: 1,
@@ -202,7 +216,14 @@ function renderMasterDetailGrid(rowData) {
             getDetailRowData: params => params.successCallback(params.data.tasks)
         },
         columnDefs: [
-            { field: "assetName", headerName: "Asset Name", cellRenderer: 'agGroupCellRenderer', flex: 2 },
+            { 
+                field: "assetName", 
+                headerName: "Asset Name", 
+                cellRenderer: 'agGroupCellRenderer', 
+                flex: 2,
+                checkboxSelection: true, // ADDS CHECKBOX TO THE PARENT ASSET
+                headerCheckboxSelection: true 
+            },
             { field: "assetType", headerName: "Type", flex: 1 },
             { 
                 field: "health", headerName: "Completion Status", flex: 1, valueFormatter: p => p.value + "%",
@@ -216,6 +237,110 @@ function renderMasterDetailGrid(rowData) {
         defaultColDef: { sortable: true, filter: true }
     };
     gridApi = agGrid.createGrid(gridDiv, gridOptions);
+}
+
+// ==========================================
+// BULK EDITING LOGIC
+// ==========================================
+function handleTaskSelection() {
+    let selectedTasks = new Set();
+    
+    // 1. Gather all tasks from selected Parent Assets
+    if (gridApi) {
+        const selectedAssets = gridApi.getSelectedRows();
+        selectedAssets.forEach(asset => {
+            if (asset.tasks) {
+                asset.tasks.forEach(t => selectedTasks.add(t.task_id));
+            }
+        });
+        
+        // 2. Gather any individually selected Tasks inside expanded rows
+        gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+            const selectedChildRows = detailGridInfo.api.getSelectedRows();
+            selectedChildRows.forEach(t => selectedTasks.add(t.task_id));
+        });
+    }
+
+    const selectedCount = selectedTasks.size;
+    const actionBar = document.getElementById('bulk-action-bar');
+    
+    if (actionBar) {
+        if (selectedCount > 0) {
+            document.getElementById('selected-task-count').innerText = selectedCount;
+            actionBar.style.display = 'flex';
+        } else {
+            actionBar.style.display = 'none';
+        }
+    }
+}
+
+function clearSelection() {
+    if (gridApi) {
+        gridApi.deselectAll(); // Deselect Parent Assets
+        gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+            detailGridInfo.api.deselectAll(); // Deselect Child Tasks
+        });
+    }
+    document.getElementById('bulk-status-select').value = "";
+    document.getElementById('bulk-date-select').value = "";
+    handleTaskSelection(); 
+}
+
+async function executeBulkUpdate() {
+    const newStatus = document.getElementById('bulk-status-select').value;
+    const newDate = document.getElementById('bulk-date-select').value;
+    const activeProject = document.getElementById("asset-project-selector").value;
+
+    if (!newStatus && !newDate) {
+        alert("Please select a new status or date to apply.");
+        return;
+    }
+
+    let tasksToUpdateMap = new Map();
+    
+    // Harvest from Parent Assets
+    gridApi.getSelectedRows().forEach(asset => {
+        if (asset.tasks) {
+            asset.tasks.forEach(task => {
+                tasksToUpdateMap.set(task.task_id, {
+                    task_id: task.task_id, status: newStatus || null, end_date: newDate || null
+                });
+            });
+        }
+    });
+
+    // Harvest from Individual Task Rows
+    gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+        const selectedRows = detailGridInfo.api.getSelectedRows();
+        selectedRows.forEach(task => {
+            tasksToUpdateMap.set(task.task_id, {
+                task_id: task.task_id, status: newStatus || null, end_date: newDate || null
+            });
+        });
+    });
+
+    const tasksToUpdate = Array.from(tasksToUpdateMap.values());
+    if (tasksToUpdate.length === 0) return;
+
+    document.getElementById("project-health-summary").innerText = "Pushing batch updates to Ayon...";
+    
+    try {
+        const response = await fetch("/api/metrics/bulk_update", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project_name: activeProject, updates: tasksToUpdate })
+        });
+
+        if (response.ok) {
+            clearSelection();
+            await loadTrackingData(activeProject); 
+        } else {
+            throw new Error("Server rejected the update.");
+        }
+    } catch (error) {
+        console.error("Bulk Update Failed:", error);
+        alert("Failed to push updates.");
+        document.getElementById("project-health-summary").innerText = "Update Failed.";
+    }
 }
 
 // ==========================================
@@ -234,7 +359,6 @@ async function loadArtistData() {
         
         const payload = await response.json();
         
-        // Map the correct payload structure from backend
         currentArtistData = payload.artists;
         currentProjectStatuses = payload.all_statuses;
         
@@ -250,7 +374,6 @@ function populateArtistDropdowns() {
 
     const uniqueAssets = new Set();
 
-    // 1. Populate Artist Dropdown
     artistDropdown.innerHTML = `<option value="ALL">-- Global View --</option>`;
     Object.keys(currentArtistData).sort().forEach(artist => {
         artistDropdown.innerHTML += `<option value="${artist}">${artist}</option>`;
@@ -259,14 +382,12 @@ function populateArtistDropdowns() {
         });
     });
 
-    // 2. Populate Asset Dropdown
     assetDropdown.innerHTML = `<option value="ALL">-- All Assets --</option>`;
     Array.from(uniqueAssets).sort().forEach(asset => {
         const shortName = asset.split('/').slice(-2).join('/');
         assetDropdown.innerHTML += `<option value="${asset}">${shortName}</option>`;
     });
 
-    // 3. Populate Status Dropdown (Using official Ayon Schema)
     statusDropdown.innerHTML = `<option value="ALL">-- All Statuses --</option>`;
     currentProjectStatuses.forEach(status => {
         statusDropdown.innerHTML += `<option value="${status}">${status}</option>`;
@@ -287,13 +408,8 @@ function applyArtistFilters() {
 
         let validPublishes = currentArtistData[artist].publishes;
 
-        if (selectedAsset !== "ALL") {
-            validPublishes = validPublishes.filter(p => p.asset_path === selectedAsset);
-        }
-
-        if (selectedStatus !== "ALL") {
-            validPublishes = validPublishes.filter(p => p.status === selectedStatus);
-        }
+        if (selectedAsset !== "ALL") validPublishes = validPublishes.filter(p => p.asset_path === selectedAsset);
+        if (selectedStatus !== "ALL") validPublishes = validPublishes.filter(p => p.status === selectedStatus);
 
         if (validPublishes.length > 0) {
             labels.push(artist);

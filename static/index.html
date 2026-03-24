@@ -43,6 +43,21 @@
                     </div>
                 </div>
             </div>
+
+            <div id="bulk-action-bar" class="controls-bar" style="display: none; border-color: var(--accent-blue); background: #1e293b; margin-top: -10px;">
+                <div class="control-group">
+                    <label style="color: var(--accent-blue);">Bulk Edit (<span id="selected-task-count">0</span> Tasks Selected)</label>
+                    <div style="display: flex; gap: 15px;">
+                        <select id="bulk-status-select" class="premium-input">
+                            <option value="">-- Do Not Change Status --</option>
+                            </select>
+                        <input type="date" id="bulk-date-select" class="premium-input" title="Set Target Date">
+                        <button class="action-btn" style="background: var(--accent-green);" onclick="executeBulkUpdate()">Apply Changes</button>
+                        <button class="action-btn" style="background: transparent; border: 1px solid var(--text-secondary);" onclick="clearSelection()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="trackingGrid" class="ag-theme-alpine-dark" style="height: 650px; width: 100%;"></div>
         </section>
 

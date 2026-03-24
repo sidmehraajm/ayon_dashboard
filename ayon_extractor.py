@@ -37,52 +37,52 @@ class AyonDataExtractor:
         return tasks
 
     def get_artist_metrics(self, project_names: list) -> dict:
-            artist_data = defaultdict(lambda: {"total_publishes": 0, "projects": set(), "publishes": []})
-            project_statuses = set() # Store official project statuses
-            
-            for proj in project_names:
-                # 1. Fetch the official Project schema from Ayon to get ALL statuses
-                project_info = self.api.get_project(proj)
-                if project_info and "statuses" in project_info:
-                    for s in project_info["statuses"]:
-                        if "name" in s:
-                            project_statuses.add(s["name"])
+        artist_data = defaultdict(lambda: {"total_publishes": 0, "projects": set(), "publishes": []})
+        project_statuses = set() # Store official project statuses
+        
+        for proj in project_names:
+            # 1. Fetch the official Project schema from Ayon to get ALL statuses
+            project_info = self.api.get_project(proj)
+            if project_info and "statuses" in project_info:
+                for s in project_info["statuses"]:
+                    if "name" in s:
+                        project_statuses.add(s["name"])
 
-                task_lookup = self._get_task_lookup(proj)
-                versions_gen = self.api.get_versions(proj, fields=["id", "version", "author", "createdAt", "taskId", "status"])
+            task_lookup = self._get_task_lookup(proj)
+            versions_gen = self.api.get_versions(proj, fields=["id", "version", "author", "createdAt", "taskId", "status"])
+            
+            for v in versions_gen:
+                author = v.get("author")
+                if not author: continue
                 
-                for v in versions_gen:
-                    author = v.get("author")
-                    if not author: continue
+                # Fallback: Just in case a version has a status not in the project schema
+                if v.get("status"):
+                    project_statuses.add(v["status"])
                     
-                    # Fallback: Just in case a version has a status not in the project schema
-                    if v.get("status"):
-                        project_statuses.add(v["status"])
-                        
-                    task_info = task_lookup.get(v.get("taskId"), {"task_name": "Unknown", "asset_path": "Unknown", "folder_id": None})
-                    
-                    artist_data[author]["total_publishes"] += 1
-                    artist_data[author]["projects"].add(proj)
-                    artist_data[author]["publishes"].append({
-                        "version": f"v{v.get('version', 1):03d}",
-                        "date": v.get("createdAt"),
-                        "status": v.get("status", "N/A"),
-                        "project": proj,
-                        "asset_path": task_info["asset_path"],
-                        "task": task_info["task_name"],
-                        "folder_id": task_info["folder_id"],
-                        "task_id": v.get("taskId")
-                    })
-                    
-            for data in artist_data.values():
-                data["projects"] = list(data["projects"])
-                data["publishes"].sort(key=lambda x: x["date"] or "", reverse=True)
+                task_info = task_lookup.get(v.get("taskId"), {"task_name": "Unknown", "asset_path": "Unknown", "folder_id": None})
                 
-            # Return BOTH the artist data and the official project statuses
-            return {
-                "artists": dict(artist_data),
-                "all_statuses": sorted(list(project_statuses))
-            }
+                artist_data[author]["total_publishes"] += 1
+                artist_data[author]["projects"].add(proj)
+                artist_data[author]["publishes"].append({
+                    "version": f"v{v.get('version', 1):03d}",
+                    "date": v.get("createdAt"),
+                    "status": v.get("status", "N/A"),
+                    "project": proj,
+                    "asset_path": task_info["asset_path"],
+                    "task": task_info["task_name"],
+                    "folder_id": task_info["folder_id"],
+                    "task_id": v.get("taskId")
+                })
+                
+        for data in artist_data.values():
+            data["projects"] = list(data["projects"])
+            data["publishes"].sort(key=lambda x: x["date"] or "", reverse=True)
+            
+        # Return BOTH the artist data and the official project statuses
+        return {
+            "artists": dict(artist_data),
+            "all_statuses": sorted(list(project_statuses))
+        }
 
     def get_daily_report(self, project_names: list) -> dict:
         """Finds all publishes and approvals within the last 24 hours."""
@@ -118,23 +118,84 @@ class AyonDataExtractor:
         return report
 
     def get_shot_and_asset_tracking(self, project_name: str) -> dict:
-        folders_gen = self.api.get_folders(project_name, fields=["id", "name", "folderType", "path"])
-        tasks_gen = self.api.get_tasks(project_name, fields=["id", "name", "taskType", "status", "folderId", "assignees", "attrib", "updatedAt"])
-        
-        dashboard_payload = {
-            f["id"]: {
-                "asset_id": f["id"], "name": f["name"], "path": f["path"], "type": f["folderType"], "tasks": []
-            } for f in folders_gen
-        }
-        
-        for task in tasks_gen:
-            folder_id = task.get("folderId")
-            if folder_id in dashboard_payload:
-                attrib = task.get("attrib", {})
-                dashboard_payload[folder_id]["tasks"].append({
-                    "task_id": task["id"], "task_name": task["name"], "task_type": task["taskType"],
-                    "status": task["status"], "assignees": task.get("assignees", []),
-                    "end_date": attrib.get("endDate"), "updated_at": task.get("updatedAt")
+            """
+            Extracts Folders and Tasks, keeping them relational.
+            Excludes empty container folders and fetches the official project statuses.
+            """
+            # 1. Fetch the official Project schema from Ayon to get ALL statuses
+            project_info = self.api.get_project(project_name)
+            project_statuses = set()
+            if project_info and "statuses" in project_info:
+                for s in project_info["statuses"]:
+                    if "name" in s:
+                        project_statuses.add(s["name"])
+
+            # 2. Fetch folders, but ONLY folders that actually contain tasks (Filters out structural folders)
+            folders_gen = self.api.get_folders(
+                project_name=project_name, 
+                fields=["id", "name", "folderType", "path"],
+                has_tasks=True 
+            )
+            
+            tasks_gen = self.api.get_tasks(
+                project_name=project_name, 
+                fields=["id", "name", "taskType", "status", "folderId", "assignees", "attrib", "updatedAt"]
+            )
+            
+            dashboard_payload = {
+                f["id"]: {
+                    "asset_id": f["id"], "name": f["name"], "path": f["path"], "type": f["folderType"], "tasks": []
+                } for f in folders_gen
+            }
+            
+            for task in tasks_gen:
+                folder_id = task.get("folderId")
+                if folder_id in dashboard_payload:
+                    attrib = task.get("attrib", {})
+                    dashboard_payload[folder_id]["tasks"].append({
+                        "task_id": task["id"], "task_name": task["name"], "task_type": task["taskType"],
+                        "status": task["status"], "assignees": task.get("assignees", []),
+                        "end_date": attrib.get("endDate"), "updated_at": task.get("updatedAt")
+                    })
+                    
+            # Return both the nested data AND the official project statuses
+            return {
+                "tracking_data": dashboard_payload,
+                "all_statuses": sorted(list(project_statuses))
+            }
+
+    def bulk_update_tasks(self, project_name: str, task_updates: list) -> dict:
+        """
+        Executes a single batch transaction to update multiple tasks.
+        Expected task_updates format: [{"task_id": "...", "status": "...", "end_date": "..."}]
+        """
+        operations = []
+        for update in task_updates:
+            task_id = update.get("task_id")
+            if not task_id:
+                continue
+
+            changes = {}
+            if update.get("status"):
+                changes["status"] = update["status"]
+
+            attrib_changes = {}
+            if update.get("end_date"):
+                attrib_changes["endDate"] = f"{update['end_date']}T00:00:00Z" # Ayon expects ISO format
+
+            if attrib_changes:
+                changes["attrib"] = attrib_changes
+
+            if changes:
+                operations.append({
+                    "type": "update",
+                    "entityType": "task",
+                    "entityId": task_id,
+                    "data": changes
                 })
-                
-        return dashboard_payload
+
+        if operations:
+            # Execute all updates in a single server transaction
+            self.api.send_batch_operations(project_name, operations)
+            
+        return {"status": "success", "updated_count": len(operations)}
