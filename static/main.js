@@ -804,62 +804,85 @@ async function loadLifecycleChart(projectName, folderId) {
             }
         });
         
+        const columns = {};
+        
         uniqueEvents.forEach(t => {
-            if (t.event_type === 'assignment' && (t.author === 'Unassigned' || !t.author)) {
-                return; // Skip explicit Unassigned tasks
-            }
+            if (t.event_type === 'assignment' && (t.author === 'Unassigned' || !t.author)) return;
             
-            const dateObj = new Date(t.date);
-            const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
-            const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            const colName = t.event_type === 'creation' ? 'Asset Initialization' : t.task;
+            if (!columns[colName]) columns[colName] = [];
+            columns[colName].push(t);
+        });
+        
+        html += `<div class="kanban-board" style="display: flex; gap: 30px; overflow-x: auto; padding-bottom: 20px; align-items: flex-start;">`;
+        
+        const colNames = Object.keys(columns).sort((a,b) => {
+            if (a === 'Asset Initialization') return -1;
+            if (b === 'Asset Initialization') return 1;
+            return a.localeCompare(b);
+        });
+        
+        colNames.forEach(col => {
+            html += `<div class="timeline-column" style="display: flex; flex-direction: column; min-width: 380px; max-width: 440px; padding-right: 10px;">`;
+            html += `<div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--panel-border); color: var(--text-primary); text-transform: uppercase;">${col}</div>`;
+            html += `<div class="timeline-container" style="padding: 0 0 20px 0;">`;
             
-            let statusColor = '#9e9e9e';
-            let titleHtml = '';
-            
-            if (t.event_type === 'creation') {
-                statusColor = '#26a69a'; // Material Teal
-                titleHtml = `<span class="timeline-title-prefix">Asset Created:</span> ${t.task}`;
-                t.author = 'Pipeline';
-            } else if (t.event_type === 'assignment') {
-                statusColor = '#66bb6a'; // Material Green
-                titleHtml = `<span class="timeline-title-prefix">Task Assigned:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
-            } else if (t.event_type === 'status_change') {
-                statusColor = '#ffa726'; // Material Orange/Yellow
-                titleHtml = `<span class="timeline-title-prefix">Status Update:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
-            } else {
-                statusColor = '#42a5f5'; // Material Blue
-                titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
-            }
-            
-            html += `
-                <div class="timeline-node" style="--node-color: ${statusColor}; --node-bg: ${statusColor}15; --node-border: ${statusColor}40;">
-                    <div class="timeline-point"></div>
-                    
-                    <div class="timeline-content">
-                        <!-- Left Block: Uniform Date/Time -->
-                        <div class="timeline-date-block">
-                            <span class="timeline-date-primary">${dateOnly}</span>
-                            <span class="timeline-date-secondary">${timeOnly}</span>
-                        </div>
+            columns[col].forEach(t => {
+                const dateObj = new Date(t.date);
+                const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
+                const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+                
+                let statusColor = '#9e9e9e';
+                let titleHtml = '';
+                
+                if (t.event_type === 'creation') {
+                    statusColor = '#26a69a'; // Material Teal
+                    titleHtml = `<span class="timeline-title-prefix">Asset Created:</span> ${t.task}`;
+                    t.author = 'Pipeline';
+                } else if (t.event_type === 'assignment') {
+                    statusColor = '#66bb6a'; // Material Green
+                    titleHtml = `<span class="timeline-title-prefix">Task Assigned:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+                } else if (t.event_type === 'status_change') {
+                    statusColor = '#ffa726'; // Material Orange/Yellow
+                    titleHtml = `<span class="timeline-title-prefix">Status Update:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+                } else {
+                    statusColor = '#42a5f5'; // Material Blue
+                    titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+                }
+                
+                html += `
+                    <div class="timeline-node" style="--node-color: ${statusColor}; --node-bg: ${statusColor}15; --node-border: ${statusColor}40;">
+                        <div class="timeline-point"></div>
                         
-                        <!-- Middle Block: Flexible Title & Vertical Status -->
-                        <div class="timeline-main-block">
-                            <div class="timeline-title">
-                                ${titleHtml}
+                        <div class="timeline-content">
+                            <!-- Left Block: Uniform Date/Time -->
+                            <div class="timeline-date-block">
+                                <span class="timeline-date-primary">${dateOnly}</span>
+                                <span class="timeline-date-secondary">${timeOnly}</span>
                             </div>
-                            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px;">
-                                <span class="status-pill">${t.status}</span>
-                                <div class="timeline-author-block" style="display: flex; align-items: center; gap: 6px; padding: 0; background: transparent;">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="timeline-author-icon" stroke="var(--text-secondary)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                                    <span class="timeline-author-text" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">${t.author || 'System'}</span>
+                            
+                            <!-- Middle Block: Flexible Title & Vertical Status -->
+                            <div class="timeline-main-block">
+                                <div class="timeline-title">
+                                    ${titleHtml}
+                                </div>
+                                <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px;">
+                                    <span class="status-pill">${t.status}</span>
+                                    <div class="timeline-author-block" style="display: flex; align-items: center; gap: 6px; padding: 0; background: transparent;">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="timeline-author-icon" stroke="var(--text-secondary)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                        <span class="timeline-author-text" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">${t.author || 'System'}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            `;
+                `;
+            });
+            
+            html += `</div></div>`;
         });
         
+        html += `</div>`;
         container.innerHTML = html;
         
     } catch (e) {
