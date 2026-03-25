@@ -3,6 +3,8 @@ const AYON_BASE_URL = "http://ayon:5000"; // Ensure this matches your local netw
 
 let gridApi = null;
 let chartInstance = null;
+let overviewPieInstance = null;
+let lifecycleLineInstance = null;
 let globalRawTrackingData = {}; 
 let allProjects = [];
 
@@ -61,19 +63,37 @@ async function loadProjects() {
         const assetSelector = document.getElementById("asset-project-selector");
         const artistSelector = document.getElementById("artist-project-selector");
         const dailySelector = document.getElementById("daily-project-selector");
+        const overviewSelector = document.getElementById("overview-project-selector");
+        const lifecycleSelector = document.getElementById("lifecycle-project-selector");
+        
+        let assetHtml = "";
+        let globalHtml = `<option value="ALL" selected>-- ALL PROJECTS --</option>`;
         
         allProjects.forEach(proj => {
-            assetSelector.innerHTML += `<option value="${proj}">${proj}</option>`;
-            artistSelector.innerHTML += `<option value="${proj}">${proj}</option>`;
-            dailySelector.innerHTML += `<option value="${proj}">${proj}</option>`;
+            const opt = `<option value="${proj}">${proj}</option>`;
+            assetHtml += opt;
+            globalHtml += opt;
         });
 
-        artistSelector.innerHTML = `<option value="ALL" selected>-- ALL PROJECTS --</option>` + artistSelector.innerHTML;
-        dailySelector.innerHTML = `<option value="ALL" selected>-- ALL PROJECTS --</option>` + dailySelector.innerHTML;
+        assetSelector.innerHTML = assetHtml;
+        artistSelector.innerHTML = globalHtml;
+        dailySelector.innerHTML = globalHtml;
+        if (overviewSelector) overviewSelector.innerHTML = assetHtml;
+        if (lifecycleSelector) lifecycleSelector.innerHTML = assetHtml;
 
         if (allProjects.length > 0) {
             loadTrackingData(allProjects[0]);
             assetSelector.addEventListener("change", (e) => loadTrackingData(e.target.value));
+            
+            if (overviewSelector) {
+                overviewSelector.addEventListener("change", (e) => loadOverviewData(e.target.value));
+                loadOverviewData(allProjects[0]);
+            }
+            if (lifecycleSelector) {
+                lifecycleSelector.addEventListener("change", (e) => loadLifecycleAssets(e.target.value));
+                document.getElementById("lifecycle-asset-selector").addEventListener("change", (e) => loadLifecycleChart(lifecycleSelector.value, e.target.value));
+                loadLifecycleAssets(allProjects[0]);
+            }
         }
     } catch (error) {
         console.error("Failed to load projects", error);
@@ -101,34 +121,48 @@ async function loadTrackingData(projectName) {
 
 function populateAssetSearchDropdown() {
     const dataList = document.getElementById("asset-list");
-    dataList.innerHTML = "";
+    let optionsHtml = "";
     Object.values(globalRawTrackingData).forEach(folder => {
-        dataList.innerHTML += `<option value="${folder.name}">`;
+        optionsHtml += `<option value="${folder.name}">`;
     });
+    dataList.innerHTML = optionsHtml;
 }
 
 function toggleStatusDropdown() { document.getElementById('status-checkboxes').classList.toggle('show'); }
 
 function buildStatusCheckboxes() {
     const container = document.getElementById('status-checkboxes');
-    container.innerHTML = "";
-
     const bulkSelect = document.getElementById('bulk-status-select');
-    if (bulkSelect) bulkSelect.innerHTML = '<option value="">-- Do Not Change Status --</option>';
-
     const deliverySelect = document.getElementById('delivery-status-selector');
-    if (deliverySelect) deliverySelect.innerHTML = '<option value="">-- Use Target Criteria --</option>';
+    
+    let containerHtml = "";
+    let bulkSelectHtml = '<option value="">-- Do Not Change Status --</option>';
+    let deliverySelectHtml = '<option value="">-- Use Target Criteria --</option>';
+    let overviewHtml = "";
+    
+    const overviewExcluded = ['not ready', 'on hold', 'remove', 'omitted'];
 
     // Build the lists using the OFFICIAL statuses from the schema
     currentTrackingStatuses.forEach(status => {
         const s = status.toLowerCase();
         const isChecked = s.includes('approve') || s.includes('final') || s.includes('done') || s.includes('deliver') ? 'checked' : '';
+        const overviewChecked = overviewExcluded.includes(s) ? '' : 'checked';
         
-        container.innerHTML += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
-        if (bulkSelect) bulkSelect.innerHTML += `<option value="${status}">${status}</option>`;
-        if (deliverySelect) deliverySelect.innerHTML += `<option value="${status}">${status}</option>`;
+        containerHtml += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
+        bulkSelectHtml += `<option value="${status}">${status}</option>`;
+        deliverySelectHtml += `<option value="${status}">${status}</option>`;
+        overviewHtml += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${overviewChecked} onchange="recalculateOverviewPieChart()"> ${status}</label>`;
     });
+    
+    container.innerHTML = containerHtml;
+    if (bulkSelect) bulkSelect.innerHTML = bulkSelectHtml;
+    if (deliverySelect) deliverySelect.innerHTML = deliverySelectHtml;
+    
+    const overviewContainer = document.getElementById('overview-status-checkboxes');
+    if (overviewContainer) overviewContainer.innerHTML = overviewHtml;
+    
     recalculateHealth();
+    recalculateOverviewPieChart();
 }
 
 function getSelectedStatuses() {
@@ -196,6 +230,41 @@ function recalculateHealth() {
     const globalHealth = totalTasksGlobal > 0 ? Math.round((completedTasksGlobal / totalTasksGlobal) * 100) : 0;
     document.getElementById("project-health-summary").innerHTML = `Global Project Completion: <span style="color: var(--accent-green);">${globalHealth}%</span>`;
     renderMasterDetailGrid(rowData);
+}
+
+function recalculateOverviewPieChart() {
+    const overviewContainer = document.getElementById('overview-status-checkboxes');
+    if (!overviewContainer) return;
+    
+    const includedStatuses = Array.from(overviewContainer.querySelectorAll('input:checked')).map(cb => cb.value.toLowerCase());
+    const statusCounts = {};
+    includedStatuses.forEach(s => statusCounts[s] = 0);
+    
+    Object.values(globalRawTrackingData).forEach(folder => {
+        if (folder.tasks) {
+            folder.tasks.forEach(task => {
+                const s = task.status.toLowerCase();
+                if (statusCounts[s] !== undefined) {
+                    statusCounts[s]++;
+                }
+            });
+        }
+    });
+    
+    const labels = [];
+    const data = [];
+    const bgColors = [];
+    const materialColors = ['#1aa192', '#099c6b', '#9b5050', '#7a7990', '#42a5f5', '#ffa726', '#ab47bc', '#ec407a', '#26c6da', '#d4e157', '#66bb6a', '#ffca28'];
+    
+    Object.keys(statusCounts).forEach((s, i) => {
+        if (statusCounts[s] > 0) {
+            labels.push(s.toUpperCase());
+            data.push(statusCounts[s]);
+            bgColors.push(materialColors[i % materialColors.length]);
+        }
+    });
+    
+    renderOverviewPieChartDynamic(labels, data, bgColors);
 }
 
 function renderMasterDetailGrid(rowData) {
@@ -399,25 +468,28 @@ function populateArtistDropdowns() {
     const statusDropdown = document.getElementById("artist-status-filter");
 
     const uniqueAssets = new Set();
-
-    artistDropdown.innerHTML = `<option value="ALL">-- Global View --</option>`;
+    
+    let artistHtml = `<option value="ALL">-- Global View --</option>`;
     Object.keys(currentArtistData).sort().forEach(artist => {
-        artistDropdown.innerHTML += `<option value="${artist}">${artist}</option>`;
+        artistHtml += `<option value="${artist}">${artist}</option>`;
         currentArtistData[artist].publishes.forEach(pub => {
             if (pub.asset_path) uniqueAssets.add(pub.asset_path);
         });
     });
+    artistDropdown.innerHTML = artistHtml;
 
-    assetDropdown.innerHTML = `<option value="ALL">-- All Assets --</option>`;
+    let assetHtml = `<option value="ALL">-- All Assets --</option>`;
     Array.from(uniqueAssets).sort().forEach(asset => {
         const shortName = asset.split('/').slice(-2).join('/');
-        assetDropdown.innerHTML += `<option value="${asset}">${shortName}</option>`;
+        assetHtml += `<option value="${asset}">${shortName}</option>`;
     });
+    assetDropdown.innerHTML = assetHtml;
 
-    statusDropdown.innerHTML = `<option value="ALL">-- All Statuses --</option>`;
+    let statusHtml = `<option value="ALL">-- All Statuses --</option>`;
     currentProjectStatuses.forEach(status => {
-        statusDropdown.innerHTML += `<option value="${status}">${status}</option>`;
+        statusHtml += `<option value="${status}">${status}</option>`;
     });
+    statusDropdown.innerHTML = statusHtml;
 }
 
 function applyArtistFilters() {
@@ -487,14 +559,15 @@ function openArtistModal(artistName) {
     const publishes = filteredModalData[artistName] || [];
     
     if (publishes.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='6'>No iterations found matching current filters.</td></tr>";
+        tbody.innerHTML = "<tr><td colspan='7'>No iterations found matching current filters.</td></tr>";
     } else {
+        let rowsHtml = "";
         publishes.forEach(pub => {
             const dateStr = pub.date ? new Date(pub.date).toLocaleString() : "N/A";
             const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
             const ayonLink = generateAyonLink(pub.project, pub.folder_id, pub.task_id);
             
-            tbody.innerHTML += `
+            rowsHtml += `
                 <tr>
                     <td>${pub.project}</td>
                     <td style="color: var(--text-secondary); font-family: monospace;">${pub.asset_path}</td>
@@ -506,6 +579,7 @@ function openArtistModal(artistName) {
                 </tr>
             `;
         });
+        tbody.innerHTML = rowsHtml;
     }
     document.getElementById('artist-modal').style.display = 'flex';
 }
@@ -536,6 +610,7 @@ async function loadDailyReport() {
             return;
         }
 
+        let containerHtml = "";
         Object.keys(reportData).forEach(project => {
             const projData = reportData[project];
             let rowsHtml = "";
@@ -558,7 +633,7 @@ async function loadDailyReport() {
                 `;
             });
 
-            container.innerHTML += `
+            containerHtml += `
                 <div class="project-report-card">
                     <div class="report-header">
                         <h3>${project}</h3>
@@ -581,8 +656,214 @@ async function loadDailyReport() {
                 </div>
             `;
         });
+        container.innerHTML = containerHtml;
     } catch (error) {
         console.error("Daily Report Error:", error);
         container.innerHTML = "<h3 style='color: var(--accent-red);'>Failed to load report.</h3>";
+    }
+}
+
+// ==========================================
+// PREMIER OVERVIEW & LIFECYCLE MODULES
+// ==========================================
+function renderOverviewPieChartDynamic(labels, data, bgColors) {
+    const ctx = document.getElementById('overviewPieChart');
+    if (!ctx) return;
+    
+    if (overviewPieInstance) overviewPieInstance.destroy();
+    
+    Chart.defaults.color = '#71627a';
+    Chart.defaults.font.family = 'Inter';
+    
+    overviewPieInstance = new Chart(ctx.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: labels.length ? labels : ['No Data'],
+            datasets: [{
+                data: data.length ? data : [1],
+                backgroundColor: data.length ? bgColors : ['#2e293a'],
+                borderColor: 'transparent',
+                borderWidth: 0,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, boxWidth: 8 } }
+            }
+        }
+    });
+}
+
+async function loadOverviewData(projectName) {
+    // Also sync the Assets tracked
+    if (document.getElementById("asset-project-selector").value !== projectName) {
+        document.getElementById("asset-project-selector").value = projectName;
+        await loadTrackingData(projectName);
+    }
+    
+    const feedContainer = document.getElementById("overview-feed");
+    if (!feedContainer) return;
+
+    feedContainer.innerHTML = "<p style='color:var(--text-secondary);'>Scanning network...</p>";
+    
+    try {
+        const response = await fetch("/api/metrics/daily", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: [projectName] })
+        });
+        const data = await response.json();
+        
+        if (!data[projectName] || data[projectName].publishes.length === 0) {
+            feedContainer.innerHTML = "<p style='color:var(--text-secondary); padding: 20px;'>No isolated publishes in the last 24h.</p>";
+            return;
+        }
+        
+        let html = "";
+        data[projectName].publishes.forEach(pub => {
+            const timeStr = pub.date ? new Date(pub.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
+            const statusColor = pub.status.toLowerCase().includes('approve') ? 'var(--accent-green)' : 'var(--accent-teal)';
+            html += `
+                <div class="feed-item">
+                    <div class="feed-header">
+                        <strong>${pub.author}</strong> <span style="color: ${statusColor}; font-weight:700;">${pub.version}</span>
+                    </div>
+                    <div class="feed-meta">
+                        <span>${timeStr}</span> &bull; <span class="feed-task">${pub.task}</span>
+                    </div>
+                    <div style="color:var(--text-primary); font-family:monospace; font-size: 0.85rem; word-break: break-all;">
+                        ${pub.asset_path}
+                    </div>
+                </div>
+            `;
+        });
+        feedContainer.innerHTML = html;
+        
+    } catch (e) {
+        console.error("Overview feed error:", e);
+        feedContainer.innerHTML = "<p style='color:var(--accent-red);'>Secure connection failed.</p>";
+    }
+}
+
+async function loadLifecycleAssets(projectName) {
+    const list = document.getElementById("lifecycle-asset-selector");
+    if (!list) return;
+
+    list.innerHTML = '<option value="">Establish secure link...</option>';
+    
+    try {
+        const response = await fetch(`/api/metrics/tracking/${projectName}`);
+        const payload = await response.json();
+        
+        let html = '<option value="">-- Select Target Asset --</option>';
+        Object.values(payload.tracking_data).forEach(folder => {
+            html += `<option value="${folder.asset_id}">${folder.name}</option>`;
+        });
+        list.innerHTML = html;
+        
+        if (lifecycleLineInstance) {
+            lifecycleLineInstance.destroy();
+            lifecycleLineInstance = null;
+        }
+    } catch (e) { console.error("Lifecycle asset map error:", e); }
+}
+
+async function loadLifecycleChart(projectName, folderId) {
+    if (!folderId) return;
+    const container = document.getElementById('lifecycle-timeline');
+    if (!container) return;
+    
+    container.innerHTML = "<div style='padding: 40px; color: var(--text-secondary);'>Retrieving chronological lifecycle...</div>";
+    
+    try {
+        const response = await fetch(`/api/metrics/lifecycle/${projectName}/${folderId}`);
+        const data = await response.json();
+        const timeline = data.lifecycle;
+        
+        if (timeline.length === 0) {
+            container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>No chronological telemetry found for this asset.</div>";
+            return;
+        }
+
+        let html = "";
+        
+        const uniqueEvents = [];
+        const seenSignatures = new Set();
+
+        timeline.forEach(t => {
+            if (t.event_type === 'publish') {
+                const timeKey = t.date.substring(0, 16); 
+                const sig = `publish_${t.task}_${t.version}_${timeKey}`;
+                if (!seenSignatures.has(sig)) {
+                    uniqueEvents.push(t);
+                    seenSignatures.add(sig);
+                }
+            } else {
+                uniqueEvents.push(t);
+            }
+        });
+        
+        uniqueEvents.forEach(t => {
+            if (t.event_type === 'assignment' && (t.author === 'Unassigned' || !t.author)) {
+                return; // Skip explicit Unassigned tasks
+            }
+            
+            const dateObj = new Date(t.date);
+            const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
+            const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            
+            let statusColor = '#9e9e9e';
+            let titleHtml = '';
+            
+            if (t.event_type === 'creation') {
+                statusColor = '#26a69a'; // Material Teal
+                titleHtml = `<span class="timeline-title-prefix">Asset Created:</span> ${t.task}`;
+                t.author = 'Pipeline';
+            } else if (t.event_type === 'assignment') {
+                statusColor = '#66bb6a'; // Material Green
+                titleHtml = `<span class="timeline-title-prefix">Task Assigned:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+            } else if (t.event_type === 'status_change') {
+                statusColor = '#ffa726'; // Material Orange/Yellow
+                titleHtml = `<span class="timeline-title-prefix">Status Update:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+            } else {
+                statusColor = '#42a5f5'; // Material Blue
+                titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+            }
+            
+            html += `
+                <div class="timeline-node" style="--node-color: ${statusColor}; --node-bg: ${statusColor}15; --node-border: ${statusColor}40;">
+                    <div class="timeline-point"></div>
+                    
+                    <div class="timeline-content">
+                        <!-- Left Block: Uniform Date/Time -->
+                        <div class="timeline-date-block">
+                            <span class="timeline-date-primary">${dateOnly}</span>
+                            <span class="timeline-date-secondary">${timeOnly}</span>
+                        </div>
+                        
+                        <!-- Middle Block: Flexible Title & Vertical Status -->
+                        <div class="timeline-main-block">
+                            <div class="timeline-title">
+                                ${titleHtml}
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px;">
+                                <span class="status-pill">${t.status}</span>
+                                <div class="timeline-author-block" style="display: flex; align-items: center; gap: 6px; padding: 0; background: transparent;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="timeline-author-icon" stroke="var(--text-secondary)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                    <span class="timeline-author-text" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">${t.author || 'System'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+        
+    } catch (e) {
+        console.error("Lifecycle telemetry failed:", e);
+        container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>Connection closed.</div>";
     }
 }

@@ -1,3 +1,5 @@
 fastapi
 uvicorn
 ayon-python-api
+python-dotenv
+cachetools

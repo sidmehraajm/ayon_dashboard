@@ -7,7 +7,7 @@
     <title>Ayon Production Terminal</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/dist/ag-grid-enterprise.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2.9">
 </head>
 
 <body>
@@ -15,7 +15,9 @@
         <div class="header-left">
             <h1>Ayon Terminal</h1>
             <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('assets')">Asset Matrix</button>
+                <button class="tab-btn active" onclick="switchTab('overview')">Project Overview</button>
+                <button class="tab-btn" onclick="switchTab('assets')">Asset Matrix</button>
+                <button class="tab-btn" onclick="switchTab('lifecycle')">Asset Lifecycle</button>
                 <button class="tab-btn" onclick="switchTab('artists')">Artist Telemetry</button>
                 <button class="tab-btn" onclick="switchTab('daily')">Day Report</button>
             </div>
@@ -24,7 +26,58 @@
     </header>
 
     <main>
-        <section id="tab-assets" class="view-section active">
+        <section id="tab-overview" class="view-section active">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Active Project</label>
+                    <select id="overview-project-selector" class="premium-input"></select>
+                </div>
+                <!-- UNIQUE DROPDOWN FOR OVERVIEW PIE -->
+                <div class="control-group">
+                    <label>Pie Chart Filtering</label>
+                    <div class="custom-dropdown">
+                        <button class="premium-input dropdown-btn" onclick="document.getElementById('overview-status-checkboxes').classList.toggle('show')">Included Statuses ▼</button>
+                        <div class="dropdown-content" id="overview-status-checkboxes"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="overview-grid">
+                <div class="overview-panel">
+                    <h2>Asset Completion Matrix</h2>
+                    <div style="flex: 1; position: relative; min-height: 400px;">
+                        <canvas id="overviewPieChart"></canvas>
+                    </div>
+                </div>
+                <div class="overview-panel">
+                    <h2>Recent Network Publishes</h2>
+                    <div id="overview-feed" class="feed-container">
+                        <!-- Feed items dynamically populated -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-lifecycle" class="view-section" style="display: none;">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Target Project</label>
+                    <select id="lifecycle-project-selector" class="premium-input"></select>
+                </div>
+                <div class="control-group">
+                    <label>Target Asset</label>
+                    <select id="lifecycle-asset-selector" class="premium-input">
+                        <option value="">-- Select Asset --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="overview-panel" style="flex: 1; border-top-left-radius: 0; border-top-right-radius: 0;">
+                <div id="lifecycle-timeline" class="timeline-container">
+                    <div style="text-align:center; color: var(--text-secondary); padding: 40px;">Select an asset to view its lifecycle history.</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-assets" class="view-section" style="display: none;">
             <div class="controls-bar">
                 <div class="control-group">
                     <label>Active Project</label>
@@ -135,7 +188,7 @@
         </div>
     </div>
 
-    <script src="/static/main.js"></script>
+    <script src="/static/main.js?v=2.8"></script>
 </body>
 
 </html>

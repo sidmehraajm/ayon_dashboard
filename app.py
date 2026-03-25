@@ -58,3 +58,8 @@ def bulk_update(payload: BulkUpdatePayload):
     """Endpoint to handle bulk task modifications in a single transaction."""
     # We use model_dump() here to convert the Pydantic objects to standard dictionaries for the extractor
     return extractor.bulk_update_tasks(payload.project_name, [u.model_dump() for u in payload.updates])
+
+@app.get("/api/metrics/lifecycle/{project_name}/{folder_id}")
+def get_lifecycle(project_name: str, folder_id: str):
+    """Returns chronologically ordered publish history for an asset."""
+    return extractor.get_asset_lifecycle(project_name, folder_id)
