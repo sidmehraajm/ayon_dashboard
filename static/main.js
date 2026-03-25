@@ -36,8 +36,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Close Custom Dropdown on Outside Click
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.custom-dropdown')) {
-            const cb = document.getElementById('status-checkboxes');
-            if(cb) cb.classList.remove('show');
+            document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
         }
     });
 });
@@ -47,6 +46,11 @@ function switchTab(tabId) {
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tabId}`).style.display = 'block';
     event.target.classList.add('active');
+    // Lazy-load planner on first visit
+    if (tabId === 'planner' && ganttState.assets.length === 0) {
+        const sel = document.getElementById('planner-project-selector');
+        if (sel && sel.value) loadPlannerData(sel.value);
+    }
 }
 
 // Generates direct deep links to the Ayon Web Interface
@@ -81,6 +85,9 @@ async function loadProjects() {
         if (overviewSelector) overviewSelector.innerHTML = assetHtml;
         if (lifecycleSelector) lifecycleSelector.innerHTML = assetHtml;
 
+        const plannerSelector = document.getElementById('planner-project-selector');
+        if (plannerSelector) plannerSelector.innerHTML = assetHtml;
+
         if (allProjects.length > 0) {
             loadTrackingData(allProjects[0]);
             assetSelector.addEventListener("change", (e) => loadTrackingData(e.target.value));
@@ -93,6 +100,9 @@ async function loadProjects() {
                 lifecycleSelector.addEventListener("change", (e) => loadLifecycleAssets(e.target.value));
                 document.getElementById("lifecycle-asset-selector").addEventListener("change", (e) => loadLifecycleChart(lifecycleSelector.value, e.target.value));
                 loadLifecycleAssets(allProjects[0]);
+            }
+            if (plannerSelector) {
+                plannerSelector.addEventListener("change", (e) => loadPlannerData(e.target.value));
             }
         }
     } catch (error) {
@@ -1005,6 +1015,410 @@ async function loadLifecycleChart(projectName, folderId) {
         console.error("Lifecycle telemetry failed:", e);
         container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>Connection closed.</div>";
     }
+}
+
+/* ================================================
+   GANTT PLANNER ENGINE
+================================================ */
+let ganttState = {
+    projectName: '',
+    assets: [],          // Processed asset rows
+    viewMode: 'month',   // 'week' | 'month' | 'quarter'
+    dayWidth: 28,
+    expandedAssets: new Set(),
+    ganttStart: null,    // JS Date — left edge of the visible timeline
+    ganttEnd: null,
+    rowHeight: { asset: 44, task: 36 },
+    headerHeight: 60,    // month-row + day-row
+};
+
+const STATUS_COLORS = {
+    'approved': '#099c6b',
+    'complete': '#1aa192',
+    'done':     '#1aa192',
+    'in progress': '#2962ff',
+    'in_progress': '#2962ff',
+    'correction': '#ef6c00',
+    'review': '#7b1fa2',
+    'pending review': '#7b1fa2',
+    'not ready': '#5b4965',
+    'on hold': '#78716c',
+    'default': '#42a5f5',
+};
+
+function ganttStatusColor(status) {
+    const s = (status || '').toLowerCase();
+    for (const [k, v] of Object.entries(STATUS_COLORS)) {
+        if (s.includes(k)) return v;
+    }
+    return STATUS_COLORS.default;
+}
+
+function ganttDateToISO(d) {
+    // d is a JS Date → returns "YYYY-MM-DD"
+    return d.toISOString().slice(0, 10);
+}
+
+function ganttDaysBetween(a, b) {
+    return Math.round((b - a) / 86400000);
+}
+
+function ganttDateAtOffset(offsetDays) {
+    const d = new Date(ganttState.ganttStart);
+    d.setDate(d.getDate() + offsetDays);
+    return d;
+}
+
+function ganttOffsetOfDate(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d)) return null;
+    return ganttDaysBetween(ganttState.ganttStart, d);
+}
+
+async function loadPlannerData(projectName) {
+    if (!projectName) return;
+    ganttState.projectName = projectName;
+
+    const sidebar = document.getElementById('gantt-sidebar-rows');
+    const barsArea = document.getElementById('gantt-bars-area');
+    const header   = document.getElementById('gantt-header');
+    sidebar.innerHTML = `<div style="padding:20px;color:var(--text-secondary);">Loading project data...</div>`;
+    barsArea.innerHTML = '';
+    header.innerHTML   = '';
+
+    try {
+        const resp = await fetch(`/api/metrics/tracking/${projectName}`, { headers: { 'Cache-Control': 'no-cache' } });
+        const data = await resp.json();
+        const tracking = data.tracking_data || {};
+
+        // Build asset list
+        const assets = Object.values(tracking).map(asset => {
+            const tasks = (asset.tasks || []).map(t => ({
+                ...t,
+                start: t.start_date ? t.start_date.slice(0, 10) : null,
+                end:   t.end_date   ? t.end_date.slice(0, 10)   : null,
+            }));
+
+            // Asset summary bar = min task start → max task end
+            const taskStarts = tasks.map(t => t.start).filter(Boolean).sort();
+            const taskEnds   = tasks.map(t => t.end).filter(Boolean).sort();
+            return {
+                id:     asset.asset_id,
+                name:   asset.name,
+                path:   asset.path,
+                type:   asset.type,
+                tasks,
+                assetStart: taskStarts[0] || null,
+                assetEnd:   taskEnds[taskEnds.length - 1] || null,
+            };
+        }).sort((a, b) => a.path.localeCompare(b.path));
+
+        ganttState.assets = assets;
+
+        // Determine gantt date window
+        const allDates = [];
+        assets.forEach(a => {
+            if (a.assetStart) allDates.push(new Date(a.assetStart));
+            if (a.assetEnd)   allDates.push(new Date(a.assetEnd));
+        });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let minDate = allDates.length ? new Date(Math.min(...allDates)) : new Date(today);
+        let maxDate = allDates.length ? new Date(Math.max(...allDates)) : new Date(today);
+        minDate.setDate(minDate.getDate() - 14);
+        maxDate.setDate(maxDate.getDate() + 30);
+        ganttState.ganttStart = minDate;
+        ganttState.ganttEnd   = maxDate;
+
+        renderGantt();
+    } catch (e) {
+        console.error('Planner load error:', e);
+        sidebar.innerHTML = `<div style="padding:20px;color:var(--accent-red);">Failed to load project data.</div>`;
+    }
+}
+
+function renderGantt() {
+    const { assets, ganttStart, ganttEnd, dayWidth, rowHeight, expandedAssets } = ganttState;
+    const totalDays   = ganttDaysBetween(ganttStart, ganttEnd) + 1;
+    const totalWidth  = totalDays * dayWidth;
+
+    const sidebar  = document.getElementById('gantt-sidebar-rows');
+    const barsArea = document.getElementById('gantt-bars-area');
+    const header   = document.getElementById('gantt-header');
+
+    // ---- Build rows list ----
+    const rows = []; // { type:'asset'|'task', data, assetId }
+    assets.forEach(a => {
+        rows.push({ type: 'asset', data: a, assetId: a.id });
+        if (expandedAssets.has(a.id)) {
+            a.tasks.forEach(t => rows.push({ type: 'task', data: t, assetId: a.id }));
+        }
+    });
+
+    const totalRowsHeight = rows.reduce((s, r) => s + rowHeight[r.type], 0);
+
+    // ---- HEADER ----
+    // Month band
+    let monthHtml = `<div class="gantt-month-label">`;
+    let d = new Date(ganttStart);
+    let curMonth = -1, curMonthCount = 0;
+    const dayCells = [];
+    for (let i = 0; i < totalDays; i++) {
+        const day = new Date(ganttStart);
+        day.setDate(day.getDate() + i);
+        dayCells.push(day);
+        if (day.getMonth() !== curMonth) {
+            if (curMonth !== -1) {
+                monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${new Date(ganttStart.getFullYear(), curMonth, 1).toLocaleString('default',{month:'short'})} ${day.getFullYear() !== ganttStart.getFullYear() ? new Date(ganttStart.getFullYear(), curMonth, 1).getFullYear() : ''}</div>`;
+            }
+            curMonth = day.getMonth();
+            curMonthCount = 0;
+        }
+        curMonthCount++;
+    }
+    monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${new Date(ganttStart.getFullYear(), curMonth, 1).toLocaleString('default',{month:'short'})}</div>`;
+    monthHtml += `</div>`;
+
+    const todayOffset = ganttDaysBetween(ganttStart, new Date());
+    let daysHtml = `<div class="gantt-days-row">`;
+    dayCells.forEach((day, i) => {
+        const isToday   = (i === todayOffset);
+        const isWeekend = [0,6].includes(day.getDay());
+        const cls = [isToday ? 'today' : '', isWeekend ? 'weekend' : ''].filter(Boolean).join(' ');
+        daysHtml += `<div class="gantt-day-cell ${cls}" style="width:${dayWidth}px">${day.getDate()}<br><span style="font-size:0.6rem;">${['Su','Mo','Tu','We','Th','Fr','Sa'][day.getDay()]}</span></div>`;
+    });
+    daysHtml += `</div>`;
+
+    // Sticky corner placeholder (aligns with sidebar width)
+    header.innerHTML = monthHtml + daysHtml;
+
+    // ---- SIDEBAR + BARS AREA ----
+    let sidebarHtml = `<div class="gantt-sidebar-header">Asset / Task</div>`;
+    let barsHtml = ``;
+
+    // Today line
+    if (todayOffset >= 0 && todayOffset <= totalDays) {
+        barsHtml += `<div class="gantt-today-line" style="left:${todayOffset * dayWidth}px; height:${totalRowsHeight}px;"></div>`;
+    }
+
+    let rowTop = 0;
+    rows.forEach((row, ri) => {
+        const rh = rowHeight[row.type];
+        const isAsset = row.type === 'asset';
+
+        // Sidebar row
+        if (isAsset) {
+            const isExpanded = expandedAssets.has(row.data.id);
+            sidebarHtml += `
+                <div class="gantt-asset-row" onclick="ganttToggleExpand('${row.data.id}')">
+                    <span class="gantt-expand-arrow ${isExpanded ? 'open' : ''}">▶</span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${row.data.path}">${row.data.name}</span>
+                </div>`;
+        } else {
+            const t = row.data;
+            const dotColor = ganttStatusColor(t.status);
+            sidebarHtml += `
+                <div class="gantt-task-row" title="${t.task_name} • ${t.status}">
+                    <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block;margin-right:8px;"></span>
+                    <span>${t.task_name}</span>
+                </div>`;
+        }
+
+        // Background stripe
+        barsHtml += `<div class="gantt-row-bg ${isAsset ? 'asset' : ''}" style="top:${rowTop}px; height:${rh}px; width:${totalWidth}px;"></div>`;
+
+        // Bar
+        if (isAsset) {
+            const startOff = ganttOffsetOfDate(row.data.assetStart);
+            const endOff   = ganttOffsetOfDate(row.data.assetEnd);
+            if (startOff !== null && endOff !== null) {
+                const barW = Math.max((endOff - startOff + 1) * dayWidth, 4);
+                const color = '#5b4965';
+                barsHtml += `
+                    <div class="gantt-bar" style="left:${startOff * dayWidth}px; width:${barW}px; top:${rowTop + 9}px; background:${color}; opacity:0.7;">
+                        <span>${row.data.name}</span>
+                    </div>`;
+            }
+        } else {
+            const t = row.data;
+            const startOff = ganttOffsetOfDate(t.start);
+            const endOff   = ganttOffsetOfDate(t.end);
+            const color    = ganttStatusColor(t.status);
+
+            if (startOff !== null || endOff !== null) {
+                const sOff = startOff !== null ? startOff : (endOff - 1);
+                const eOff = endOff   !== null ? endOff   : (startOff + 1);
+                const barW = Math.max((eOff - sOff + 1) * dayWidth, 4);
+                const label = t.task_name;
+                barsHtml += `
+                    <div class="gantt-bar" 
+                         id="gbar-${t.task_id}"
+                         data-task-id="${t.task_id}"
+                         data-asset-id="${row.assetId}"
+                         data-start="${t.start || ''}"
+                         data-end="${t.end || ''}"
+                         style="left:${sOff * dayWidth}px; width:${barW}px; top:${rowTop + 5}px; height:26px; background:${color};"
+                         onmousedown="ganttBarMousedown(event, 'move')"
+                    >
+                        ${barW > 50 ? `<span>${label}</span>` : ''}
+                        <div class="gantt-bar-handle" onmousedown="ganttBarMousedown(event, 'resize')"></div>
+                    </div>`;
+            } else {
+                // No dates — placeholder
+                barsHtml += `
+                    <div class="gantt-bar no-date" style="left:${(todayOffset > 0 ? todayOffset : 0) * dayWidth}px; width:${dayWidth * 2}px; top:${rowTop + 5}px; height:26px;">
+                        <span style="font-size:0.65rem;">No date</span>
+                    </div>`;
+            }
+        }
+
+        rowTop += rh;
+    });
+
+    barsArea.style.height = totalRowsHeight + 'px';
+    barsArea.style.width  = totalWidth + 'px';
+    sidebar.innerHTML  = sidebarHtml;
+    barsArea.innerHTML = barsHtml;
+}
+
+function ganttToggleExpand(assetId) {
+    if (ganttState.expandedAssets.has(assetId)) {
+        ganttState.expandedAssets.delete(assetId);
+    } else {
+        ganttState.expandedAssets.add(assetId);
+    }
+    renderGantt();
+}
+
+/* ---- Drag / Resize engine ---- */
+let _ganttDrag = null;
+
+function ganttBarMousedown(e, mode) {
+    e.preventDefault();
+    e.stopPropagation();
+    const bar = mode === 'resize' ? e.currentTarget.parentElement : e.currentTarget;
+    if (!bar.dataset.taskId) return;
+
+    const startX    = e.clientX;
+    const origLeft  = parseInt(bar.style.left);
+    const origWidth = parseInt(bar.style.width);
+
+    bar.classList.add('dragging');
+    _ganttDrag = { bar, mode, startX, origLeft, origWidth };
+
+    const tooltip = ganttGetTooltip();
+    tooltip.style.display = 'block';
+
+    document.addEventListener('mousemove', _ganttOnMousemove);
+    document.addEventListener('mouseup',   _ganttOnMouseup, { once: true });
+}
+
+function _ganttOnMousemove(e) {
+    if (!_ganttDrag) return;
+    const { bar, mode, startX, origLeft, origWidth } = _ganttDrag;
+    const { dayWidth } = ganttState;
+    const dx    = e.clientX - startX;
+    const dDays = Math.round(dx / dayWidth);
+
+    let newLeft  = origLeft;
+    let newWidth = origWidth;
+
+    if (mode === 'move') {
+        newLeft = Math.max(0, origLeft + dDays * dayWidth);
+        bar.style.left = newLeft + 'px';
+    } else {
+        newWidth = Math.max(dayWidth, origWidth + dDays * dayWidth);
+        bar.style.width = newWidth + 'px';
+    }
+
+    // Update tooltip
+    const startOff = Math.round(newLeft / dayWidth);
+    const endOff   = mode === 'move' ? startOff + Math.round(origWidth / dayWidth) - 1
+                                     : Math.round(newLeft / dayWidth) + Math.round(newWidth / dayWidth) - 1;
+    const startDate = ganttDateAtOffset(startOff);
+    const endDate   = ganttDateAtOffset(endOff);
+    const tooltip   = ganttGetTooltip();
+    tooltip.innerHTML = `<b>${bar.querySelector('span') ? bar.querySelector('span').textContent : 'Task'}</b><br>${ganttDateToISO(startDate)} → ${ganttDateToISO(endDate)}`;
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top  = (e.clientY - 10) + 'px';
+}
+
+async function _ganttOnMouseup(e) {
+    if (!_ganttDrag) return;
+    const { bar, mode, origLeft, origWidth } = _ganttDrag;
+    bar.classList.remove('dragging');
+    ganttGetTooltip().style.display = 'none';
+    document.removeEventListener('mousemove', _ganttOnMousemove);
+
+    const { dayWidth, projectName } = ganttState;
+    const newLeft  = parseInt(bar.style.left);
+    const newWidth = parseInt(bar.style.width);
+    const startOff = Math.round(newLeft / dayWidth);
+    const endOff   = mode === 'move'
+        ? startOff + Math.round(origWidth / dayWidth) - 1
+        : Math.round(newLeft / dayWidth) + Math.round(newWidth / dayWidth) - 1;
+
+    const newStart = ganttDateToISO(ganttDateAtOffset(startOff));
+    const newEnd   = ganttDateToISO(ganttDateAtOffset(endOff));
+    const taskId   = bar.dataset.taskId;
+    const assetId  = bar.dataset.assetId;
+
+    // Optimistic update state
+    const asset = ganttState.assets.find(a => a.id === assetId);
+    if (asset) {
+        const task = asset.tasks.find(t => t.task_id === taskId);
+        if (task) {
+            task.start = newStart;
+            task.end   = newEnd;
+            // Recalculate asset summary
+            const starts = asset.tasks.map(t => t.start).filter(Boolean).sort();
+            const ends   = asset.tasks.map(t => t.end).filter(Boolean).sort();
+            asset.assetStart = starts[0] || null;
+            asset.assetEnd   = ends[ends.length - 1] || null;
+        }
+    }
+
+    // Persist to Ayon
+    try {
+        const resp = await fetch('/api/metrics/planner/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName, task_id: taskId, start_date: newStart, end_date: newEnd })
+        });
+        const result = await resp.json();
+        const indicator = document.getElementById('gantt-save-indicator');
+        if (indicator) {
+            indicator.style.opacity = '1';
+            setTimeout(() => indicator.style.opacity = '0', 2000);
+        }
+    } catch (err) {
+        console.error('Gantt save error:', err);
+    }
+
+    _ganttDrag = null;
+    renderGantt();
+}
+
+function ganttGetTooltip() {
+    let t = document.getElementById('gantt-tooltip');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'gantt-tooltip';
+        document.body.appendChild(t);
+    }
+    return t;
+}
+
+function setGanttView(mode) {
+    ganttState.viewMode = mode;
+    const widths = { week: 48, month: 28, quarter: 16 };
+    ganttState.dayWidth = widths[mode] || 28;
+    document.querySelectorAll('.gantt-view-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(`gantt-view-${mode}`);
+    if (btn) btn.classList.add('active');
+    renderGantt();
 }
 
 function toggleLifecycleTaskDropdown() {

@@ -63,3 +63,17 @@ def bulk_update(payload: BulkUpdatePayload):
 def get_lifecycle(project_name: str, folder_id: str):
     """Returns chronologically ordered publish history for an asset."""
     return extractor.get_asset_lifecycle(project_name, folder_id)
+
+class TaskDatePayload(BaseModel):
+    project_name: str
+    task_id: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+@app.post("/api/metrics/planner/update")
+def planner_update_dates(payload: TaskDatePayload):
+    """Endpoint called when user drags/resizes a Gantt bar to persist new dates."""
+    return extractor.update_task_dates(
+        payload.project_name, payload.task_id,
+        payload.start_date or "", payload.end_date or ""
+    )

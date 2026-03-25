@@ -200,7 +200,8 @@ class AyonDataExtractor:
                     dashboard_payload[folder_id]["tasks"].append({
                         "task_id": task["id"], "task_name": task["name"], "task_type": task["taskType"],
                         "status": task["status"], "assignees": task.get("assignees", []),
-                        "end_date": attrib.get("endDate"), "updated_at": task.get("updatedAt")
+                        "start_date": attrib.get("startDate"), "end_date": attrib.get("endDate"),
+                        "updated_at": task.get("updatedAt"), "folder_id": folder_id
                     })
                     
             # Return both the nested data AND the official project statuses
@@ -336,4 +337,32 @@ class AyonDataExtractor:
             # Execute all updates in a single server transaction
             self.api.send_batch_operations(project_name, operations)
             
+        tracking_cache.clear()
+        return {"status": "ok", "updated": len(operations)}
+
+    def update_task_dates(self, project_name: str, task_id: str, start_date: str, end_date: str) -> dict:
+        """
+        Updates the startDate and/or endDate of a single task via Ayon batch ops.
+        Used by the Gantt planner when a bar is dragged/resized.
+        """
+        try:
+            attrib_changes = {}
+            if start_date:
+                attrib_changes["startDate"] = f"{start_date}T00:00:00Z"
+            if end_date:
+                attrib_changes["endDate"] = f"{end_date}T00:00:00Z"
+            if not attrib_changes:
+                return {"status": "no_change"}
+            operations = [{
+                "type": "update",
+                "entityType": "task",
+                "entityId": task_id,
+                "data": {"attrib": attrib_changes}
+            }]
+            self.api.send_batch_operations(project_name, operations)
+            tracking_cache.clear()
+            return {"status": "ok"}
+        except Exception as e:
+            logger.error(f"Failed to update task dates for {task_id}: {e}", exc_info=True)
+            return {"status": "error", "detail": str(e)}
         return {"status": "success", "updated_count": len(operations)}

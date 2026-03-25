@@ -18,6 +18,7 @@
                 <button class="tab-btn active" onclick="switchTab('overview')">Project Overview</button>
                 <button class="tab-btn" onclick="switchTab('assets')">Asset Matrix</button>
                 <button class="tab-btn" onclick="switchTab('lifecycle')">Asset Lifecycle</button>
+                <button class="tab-btn" onclick="switchTab('planner')">Planner</button>
                 <button class="tab-btn" onclick="switchTab('artists')">Artist Telemetry</button>
                 <button class="tab-btn" onclick="switchTab('daily')">Day Report</button>
             </div>
@@ -53,6 +54,37 @@
                     <div id="overview-feed" class="feed-container">
                         <!-- Feed items dynamically populated -->
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-planner" class="view-section" style="display:none;">
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Target Project</label>
+                    <select id="planner-project-selector" class="premium-input"></select>
+                </div>
+                <div class="control-group">
+                    <label>View Mode</label>
+                    <div style="display:flex; gap:6px;">
+                        <button id="gantt-view-week"  class="action-btn gantt-view-btn" onclick="setGanttView('week')">Week</button>
+                        <button id="gantt-view-month" class="action-btn gantt-view-btn active" onclick="setGanttView('month')">Month</button>
+                        <button id="gantt-view-quarter" class="action-btn gantt-view-btn" onclick="setGanttView('quarter')">Quarter</button>
+                    </div>
+                </div>
+                <div class="control-group" style="margin-left:auto;">
+                    <span id="gantt-save-indicator" style="font-size:0.8rem; color:var(--accent-teal); opacity:0;">Saved ✓</span>
+                </div>
+            </div>
+            <div id="gantt-root" style="display:flex; flex:1; overflow:hidden; background:var(--bg-primary); border-top:1px solid var(--panel-border);">
+                <!-- Sidebar -->
+                <div id="gantt-sidebar" style="width:280px; min-width:280px; overflow-y:auto; border-right:1px solid var(--panel-border); flex-shrink:0;">
+                    <div id="gantt-sidebar-rows"></div>
+                </div>
+                <!-- Timeline -->
+                <div id="gantt-timeline-wrap" style="flex:1; overflow:auto; position:relative;">
+                    <div id="gantt-header"></div>
+                    <div id="gantt-bars-area" style="position:relative;"></div>
                 </div>
             </div>
         </section>
@@ -232,7 +264,7 @@
         </div>
     </div>
 
-    <script src="/static/main.js?v=3.1"></script>
+    <script src="/static/main.js?v=4.0"></script>
 </body>
 
 </html>
