@@ -232,10 +232,17 @@ function recalculateHealth() {
     renderMasterDetailGrid(rowData);
 }
 
+function generateAyonLink(projectName, folderId) {
+    return `http://ayon:5000/projects/${projectName}/overview?project=${projectName}&type=folder&id=${folderId}`;
+}
+
+let currentPieStatusManifest = {};
+
 function recalculateOverviewPieChart() {
     const overviewContainer = document.getElementById('overview-status-checkboxes');
     if (!overviewContainer) return;
     
+    currentPieStatusManifest = {};
     const includedStatuses = Array.from(overviewContainer.querySelectorAll('input:checked')).map(cb => cb.value.toLowerCase());
     const statusCounts = {};
     includedStatuses.forEach(s => statusCounts[s] = 0);
@@ -246,6 +253,13 @@ function recalculateOverviewPieChart() {
                 const s = task.status.toLowerCase();
                 if (statusCounts[s] !== undefined) {
                     statusCounts[s]++;
+                    if (!currentPieStatusManifest[s]) currentPieStatusManifest[s] = [];
+                    currentPieStatusManifest[s].push({
+                        assetName: folder.name,
+                        assetPath: folder.path,
+                        taskName: task.task_name,
+                        folderId: folder.asset_id
+                    });
                 }
             });
         }
@@ -301,7 +315,7 @@ function renderMasterDetailGrid(rowData) {
                     {
                         headerName: 'Action', flex: 0.5,
                         cellRenderer: params => {
-                            const link = generateAyonLink(activeProject, params.data.folder_id, params.data.task_id);
+                            const link = generateAyonLink(activeProject, params.data.folder_id);
                             return `<a href="${link}" target="_blank" class="ayon-link">Open ↗</a>`;
                         }
                     }
@@ -565,7 +579,7 @@ function openArtistModal(artistName) {
         publishes.forEach(pub => {
             const dateStr = pub.date ? new Date(pub.date).toLocaleString() : "N/A";
             const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
-            const ayonLink = generateAyonLink(pub.project, pub.folder_id, pub.task_id);
+            const ayonLink = generateAyonLink(pub.project, pub.folder_id);
             
             rowsHtml += `
                 <tr>
@@ -618,7 +632,7 @@ async function loadDailyReport() {
             projData.publishes.forEach(pub => {
                 const dateStr = pub.date ? new Date(pub.date).toLocaleTimeString() : "N/A";
                 const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
-                const ayonLink = generateAyonLink(project, pub.folder_id, pub.task_id);
+                const ayonLink = generateAyonLink(project, pub.folder_id);
 
                 rowsHtml += `
                     <tr>
@@ -691,11 +705,72 @@ function renderOverviewPieChartDynamic(labels, data, bgColors) {
             responsive: true, maintainAspectRatio: false,
             cutout: '70%',
             plugins: {
-                legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, boxWidth: 8 } }
+                legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, boxWidth: 8 } },
+                tooltip: { callbacks: { label: function(context) { return context.raw + ' Tasks'; } } }
+            },
+            onClick: (event, elements) => {
+                if (elements.length > 0 && labels.length > 0 && labels[0] !== 'No Data') {
+                    const index = elements[0].index;
+                    const statusKey = labels[index].toLowerCase();
+                    openPieChartDetails(statusKey, currentPieStatusManifest[statusKey] || []);
+                }
             }
         }
     });
 }
+
+function openPieChartDetails(status, tasksArray) {
+    document.getElementById('pie-modal-title').innerText = `Status: ${status.toUpperCase()}`;
+    const tbody = document.getElementById('pie-modal-tbody');
+    const activeProject = document.getElementById("asset-project-selector").value;
+    
+    if (tasksArray.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='4'>No tasks found for this status.</td></tr>";
+    } else {
+        let rowsHtml = "";
+        tasksArray.forEach(t => {
+            const ayonLink = generateAyonLink(activeProject, t.folderId);
+            rowsHtml += `
+                <tr>
+                    <td style="font-weight: 600; color: #fff;">${t.assetName}</td>
+                    <td style="font-family: monospace; color: var(--text-secondary);">${t.assetPath}</td>
+                    <td style="color: var(--accent-blue); font-weight: 600;">${t.taskName}</td>
+                    <td><a href="${ayonLink}" target="_blank" class="ayon-link">Inspect ↗</a></td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = rowsHtml;
+    }
+    document.getElementById('pie-modal').style.display = 'flex';
+}
+
+function closePieModal() { document.getElementById('pie-modal').style.display = 'none'; }
+
+function openPublishDetails(task, version, commentRaw, author, dateRaw, folderId) {
+    const comment = decodeURIComponent(commentRaw);
+    document.getElementById('publish-modal-author').innerText = decodeURIComponent(author);
+    
+    const d = new Date(dateRaw);
+    document.getElementById('publish-modal-date').innerText = d.toLocaleDateString() + ' @ ' + d.toLocaleTimeString();
+    
+    const commentDiv = document.getElementById('publish-modal-comment');
+    commentDiv.innerText = comment ? comment : "No comments attached to this publish version via Ayon hooks.";
+    if (!comment) {
+        commentDiv.style.color = "var(--text-secondary)";
+        commentDiv.style.fontStyle = "italic";
+    } else {
+        commentDiv.style.color = "#fff";
+        commentDiv.style.fontStyle = "normal";
+    }
+    
+    const activeProject = document.getElementById("lifecycle-project-selector").value;
+    const ayonLink = generateAyonLink(activeProject, folderId);
+    document.getElementById('publish-modal-ayon-btn').href = ayonLink;
+    
+    document.getElementById('publish-modal').style.display = 'flex';
+}
+
+function closePublishModal() { document.getElementById('publish-modal').style.display = 'none'; }
 
 async function loadOverviewData(projectName) {
     // Also sync the Assets tracked
@@ -816,7 +891,41 @@ async function loadLifecycleChart(projectName, folderId) {
         
         html += `<div class="kanban-board" style="display: flex; gap: 30px; overflow-x: auto; padding-bottom: 20px; align-items: flex-start;">`;
         
-        const colNames = Object.keys(columns).sort((a,b) => {
+        // A column is considered "active" if it has at least one real event:
+        //   - a publish, OR
+        //   - an assignment with an actual artist (non-empty, non-'Unassigned'), OR
+        //   - a status change whose status is NOT 'not ready'
+        const colNamesRaw = Object.keys(columns);
+        const isActiveCol = col => {
+            if (col === 'Asset Initialization') return true;
+            return columns[col].some(e => {
+                if (e.event_type === 'publish') return true;
+                if (e.event_type === 'assignment' && e.author && e.author !== 'Unassigned') return true;
+                if (e.event_type === 'status_change' && (e.status || '').toLowerCase() !== 'not ready') return true;
+                return false;
+            });
+        };
+
+        // Build the task filter checkboxes — active ones checked by default
+        const filterContainer = document.getElementById('lifecycle-task-checkboxes');
+        if (filterContainer) {
+            filterContainer.innerHTML = '';
+            colNamesRaw.filter(c => c !== 'Asset Initialization').sort().forEach(col => {
+                const active = isActiveCol(col);
+                filterContainer.innerHTML += `<label class="dropdown-item"><input type="checkbox" value="${col}" ${active ? 'checked' : ''} onchange="rebuildLifecycleKanban()"> ${col}</label>`;
+            });
+        }
+
+        // Persist columns + html builder to a closure for rebuildLifecycleKanban to re-use
+        window._lifecycleColumns = columns;
+        window._lifecycleIsActiveCol = isActiveCol;
+
+        const colNames = colNamesRaw.filter(col => {
+            if (col === 'Asset Initialization') return true;
+            // Respect the task filter checkboxes if they exist
+            const cb = filterContainer && filterContainer.querySelector(`input[value="${col}"]`);
+            return cb ? cb.checked : isActiveCol(col);
+        }).sort((a,b) => {
             if (a === 'Asset Initialization') return -1;
             if (b === 'Asset Initialization') return 1;
             return a.localeCompare(b);
@@ -834,6 +943,7 @@ async function loadLifecycleChart(projectName, folderId) {
                 
                 let statusColor = '#9e9e9e';
                 let titleHtml = '';
+                let extraParams = '';
                 
                 if (t.event_type === 'creation') {
                     statusColor = '#26a69a'; // Material Teal
@@ -848,13 +958,19 @@ async function loadLifecycleChart(projectName, folderId) {
                 } else {
                     statusColor = '#42a5f5'; // Material Blue
                     titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
+                    titleHtml += ` <span style="font-size:0.75em; border: 1px solid var(--panel-border); border-radius: 4px; padding: 2px 6px; margin-left: 5px; color: var(--text-secondary); background: rgba(255,255,255,0.05);">Details</span>`;
+                    
+                    const safeComment = encodeURIComponent(t.comment || "");
+                    const safeTask = encodeURIComponent(t.task || "");
+                    const safeAuthor = encodeURIComponent(t.author || "");
+                    extraParams = `style="cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'" onclick="openPublishDetails('${safeTask}', '${t.version || ''}', '${safeComment}', '${safeAuthor}', '${t.date}', '${t.folder_id}')"`;
                 }
                 
                 html += `
-                    <div class="timeline-node" style="--node-color: ${statusColor}; --node-bg: ${statusColor}15; --node-border: ${statusColor}40;">
-                        <div class="timeline-point"></div>
+                    <div class="timeline-node" ${extraParams}>
+                        <div class="timeline-point" style="background: ${statusColor}; box-shadow: 0 0 10px ${statusColor}80;"></div>
                         
-                        <div class="timeline-content">
+                        <div class="timeline-content" style="background: ${statusColor}15; border: 1px solid ${statusColor}40;">
                             <!-- Left Block: Uniform Date/Time -->
                             <div class="timeline-date-block">
                                 <span class="timeline-date-primary">${dateOnly}</span>
@@ -889,4 +1005,89 @@ async function loadLifecycleChart(projectName, folderId) {
         console.error("Lifecycle telemetry failed:", e);
         container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>Connection closed.</div>";
     }
+}
+
+function toggleLifecycleTaskDropdown() {
+    document.getElementById('lifecycle-task-checkboxes').classList.toggle('show');
+}
+
+function rebuildLifecycleKanban() {
+    const columns = window._lifecycleColumns;
+    if (!columns) return;
+
+    const filterContainer = document.getElementById('lifecycle-task-checkboxes');
+    const isActiveCol = window._lifecycleIsActiveCol || (() => true);
+
+    const colNames = Object.keys(columns).filter(col => {
+        if (col === 'Asset Initialization') return true;
+        const cb = filterContainer && filterContainer.querySelector(`input[value="${col}"]`);
+        return cb ? cb.checked : isActiveCol(col);
+    }).sort((a,b) => {
+        if (a === 'Asset Initialization') return -1;
+        if (b === 'Asset Initialization') return 1;
+        return a.localeCompare(b);
+    });
+
+    let html = `<div class="kanban-board" style="display: flex; gap: 30px; overflow-x: auto; padding-bottom: 20px; align-items: flex-start;">`;
+
+    colNames.forEach(col => {
+        html += `<div class="timeline-column" style="display: flex; flex-direction: column; min-width: 380px; max-width: 440px; padding-right: 10px;">`;
+        html += `<div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--panel-border); color: var(--text-primary); text-transform: uppercase;">${col}</div>`;
+        html += `<div class="timeline-container" style="padding: 0 0 20px 0;">`;
+
+        columns[col].forEach(t => {
+            const dateObj = new Date(t.date);
+            const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
+            const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            let statusColor = '#9e9e9e';
+            let titleHtml = '';
+            let extraParams = '';
+
+            if (t.event_type === 'creation') {
+                statusColor = '#26a69a';
+                titleHtml = `<span class="timeline-title-prefix">Asset Created:</span> ${t.task}`;
+                t.author = 'Pipeline';
+            } else if (t.event_type === 'assignment') {
+                statusColor = '#66bb6a';
+                titleHtml = `<span class="timeline-title-prefix">Task Assigned:</span> ${t.task} <span style="font-size:0.85em;opacity:0.7;">(${t.department})</span>`;
+            } else if (t.event_type === 'status_change') {
+                statusColor = '#ffa726';
+                titleHtml = `<span class="timeline-title-prefix">Status Update:</span> ${t.task} <span style="font-size:0.85em;opacity:0.7;">(${t.department})</span>`;
+            } else {
+                statusColor = '#42a5f5';
+                titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size:0.85em;opacity:0.7;">(${t.department})</span>`;
+                titleHtml += ` <span style="font-size:0.75em;border:1px solid var(--panel-border);border-radius:4px;padding:2px 6px;margin-left:5px;color:var(--text-secondary);background:rgba(255,255,255,0.05);">Details</span>`;
+                const safeComment = encodeURIComponent(t.comment || "");
+                const safeTask = encodeURIComponent(t.task || "");
+                const safeAuthor = encodeURIComponent(t.author || "");
+                extraParams = `style="cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.3);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'" onclick="openPublishDetails('${safeTask}','${t.version||''}','${safeComment}','${safeAuthor}','${t.date}','${t.folder_id}')"`;
+            }
+
+            html += `
+                <div class="timeline-node" ${extraParams}>
+                    <div class="timeline-point" style="background:${statusColor};box-shadow:0 0 10px ${statusColor}80;"></div>
+                    <div class="timeline-content" style="background:${statusColor}15;border:1px solid ${statusColor}40;">
+                        <div class="timeline-date-block">
+                            <span class="timeline-date-primary">${dateOnly}</span>
+                            <span class="timeline-date-secondary">${timeOnly}</span>
+                        </div>
+                        <div class="timeline-main-block">
+                            <div class="timeline-title">${titleHtml}</div>
+                            <div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:4px;">
+                                <span class="status-pill">${t.status}</span>
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                    <span style="font-size:0.8rem;color:var(--text-secondary);font-weight:500;">${t.author || 'System'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    html += `</div>`;
+    document.getElementById('lifecycle-timeline').innerHTML = html;
 }

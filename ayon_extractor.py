@@ -278,9 +278,10 @@ class AyonDataExtractor:
             
             # 3. Get versions for these tasks
             if task_ids:
-                versions_gen = self.api.get_versions(project_name, task_ids=task_ids, fields=["id", "version", "author", "createdAt", "taskId", "status"])
+                versions_gen = self.api.get_versions(project_name, task_ids=task_ids, fields=["id", "version", "author", "createdAt", "taskId", "status", "attrib"])
                 for v in versions_gen:
                     t_info = tasks.get(v.get("taskId"), {"name": "Unknown", "taskType": "Unknown"})
+                    comment = v.get("attrib", {}).get("comment", "")
                     timeline.append({
                         "event_type": "publish",
                         "date": v.get("createdAt"),
@@ -289,7 +290,9 @@ class AyonDataExtractor:
                         "version": f"v{v.get('version', 1):03d}",
                         "author": v.get("author", "Unknown"),
                         "status": v.get("status", "Published"),
-                        "task_id": v.get("taskId")
+                        "task_id": v.get("taskId"),
+                        "comment": comment,
+                        "folder_id": folder_id
                     })
                 
             timeline.sort(key=lambda x: x["date"] or "")
