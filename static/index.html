@@ -42,6 +42,12 @@
                         <div class="dropdown-content" id="status-checkboxes"></div>
                     </div>
                 </div>
+                <div class="control-group">
+                    <label>Delivery Reference Status</label>
+                    <select id="delivery-status-selector" class="premium-input" onchange="recalculateHealth()">
+                        <option value="">-- Use Target Criteria --</option>
+                    </select>
+                </div>
             </div>
 
             <div id="bulk-action-bar" class="controls-bar" style="display: none; border-color: var(--accent-blue); background: #1e293b; margin-top: -10px;">
@@ -119,6 +125,7 @@
                             <th>Task</th>
                             <th>Version</th>
                             <th>Status</th>
+                            <th>Time</th>
                             <th>Link</th>
                         </tr>
                     </thead>

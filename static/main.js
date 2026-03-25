@@ -116,6 +116,9 @@ function buildStatusCheckboxes() {
     const bulkSelect = document.getElementById('bulk-status-select');
     if (bulkSelect) bulkSelect.innerHTML = '<option value="">-- Do Not Change Status --</option>';
 
+    const deliverySelect = document.getElementById('delivery-status-selector');
+    if (deliverySelect) deliverySelect.innerHTML = '<option value="">-- Use Target Criteria --</option>';
+
     // Build the lists using the OFFICIAL statuses from the schema
     currentTrackingStatuses.forEach(status => {
         const s = status.toLowerCase();
@@ -123,6 +126,7 @@ function buildStatusCheckboxes() {
         
         container.innerHTML += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
         if (bulkSelect) bulkSelect.innerHTML += `<option value="${status}">${status}</option>`;
+        if (deliverySelect) deliverySelect.innerHTML += `<option value="${status}">${status}</option>`;
     });
     recalculateHealth();
 }
@@ -131,19 +135,30 @@ function getSelectedStatuses() {
     return Array.from(document.querySelectorAll('#status-checkboxes input:checked')).map(cb => cb.value.toLowerCase());
 }
 
-function calculateDelay(endDateStr, updatedAtStr) {
+function calculateDelay(endDateStr, updatedAtStr, isDelivered) {
     if (!endDateStr) return { text: "N/A", color: "" };
-    if (!updatedAtStr) return { text: "Pending", color: "" };
+    
+    if (!isDelivered) {
+        const diffTime = Date.now() - new Date(endDateStr);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays > 0) return { text: `${diffDays} Days Late (Pending)`, color: "#ef4444" };
+        else return { text: "Pending", color: "" };
+    }
+    
+    if (!updatedAtStr) return { text: "Delivered", color: "#10b981" };
     
     const diffTime = new Date(updatedAtStr) - new Date(endDateStr);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
     if (diffDays <= 0) return { text: "On Time", color: "#10b981" };
-    return { text: `${diffDays} Days Late`, color: "#ef4444" };
+    return { text: `${diffDays} Days Late`, color: "#f59e0b" };
 }
 
 function recalculateHealth() {
     const completedStatuses = getSelectedStatuses();
+    const referenceStatusSelect = document.getElementById('delivery-status-selector');
+    const referenceStatus = referenceStatusSelect ? referenceStatusSelect.value.toLowerCase() : "";
+    
     const rowData = [];
     let totalTasksGlobal = 0;
     let completedTasksGlobal = 0;
@@ -154,8 +169,18 @@ function recalculateHealth() {
 
         if (folder.tasks) {
             folder.tasks.forEach(task => {
-                if (completedStatuses.includes(task.status.toLowerCase())) completedTasks++;
-                const delayData = calculateDelay(task.end_date, task.updated_at);
+                const taskStatus = task.status.toLowerCase();
+                if (completedStatuses.includes(taskStatus)) completedTasks++;
+                
+                let isDelivered = false;
+                if (referenceStatus !== "") {
+                    // Use exclusively the selected reference status, OR if it's already in the completed criteria
+                    isDelivered = (taskStatus === referenceStatus) || completedStatuses.includes(taskStatus);
+                } else {
+                    isDelivered = completedStatuses.includes(taskStatus);
+                }
+                
+                const delayData = calculateDelay(task.end_date, task.updated_at, isDelivered);
                 task.delay_text = delayData.text;
                 task.delay_color = delayData.color;
             });
@@ -183,6 +208,7 @@ function renderMasterDetailGrid(rowData) {
         rowData: rowData,
         theme: "ag-theme-alpine-dark",
         masterDetail: true,
+        detailRowAutoHeight: true,
         rowSelection: 'multiple', // ENABLE MASTER ROW SELECTION (ASSETS)
         onSelectionChanged: handleTaskSelection, // Listener for Asset Selection
         detailCellRendererParams: {
@@ -475,6 +501,7 @@ function openArtistModal(artistName) {
                     <td>${pub.task}</td>
                     <td><span style="color: var(--accent-blue); font-weight: bold;">${pub.version}</span></td>
                     <td><span class="status-pill ${statusClass}">${pub.status}</span></td>
+                    <td>${dateStr}</td>
                     <td><a href="${ayonLink}" target="_blank" class="ayon-link">Open ↗</a></td>
                 </tr>
             `;
