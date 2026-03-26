@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from cachetools import cached, TTLCache
+from typing import List, Optional, Dict, Any
 from ayon_api.server_api import ServerAPI
 import logging
 
@@ -340,29 +341,52 @@ class AyonDataExtractor:
         tracking_cache.clear()
         return {"status": "ok", "updated": len(operations)}
 
-    def update_task_dates(self, project_name: str, task_id: str, start_date: str, end_date: str) -> dict:
+    def update_task_properties(self, project_name: str, task_id: str, 
+                               start_date: Optional[str] = None, 
+                               end_date: Optional[str] = None,
+                               status: Optional[str] = None,
+                               assignees: Optional[list] = None) -> dict:
         """
-        Updates the startDate and/or endDate of a single task via Ayon batch ops.
-        Used by the Gantt planner when a bar is dragged/resized.
+        Updates task attributes (dates, status, assignees) via Ayon batch ops.
         """
         try:
+            changes: Dict[str, Any] = {}
+            if status:
+                changes["status"] = status
+            if assignees is not None:
+                changes["assignees"] = assignees
+
             attrib_changes = {}
             if start_date:
                 attrib_changes["startDate"] = f"{start_date}T00:00:00Z"
             if end_date:
                 attrib_changes["endDate"] = f"{end_date}T00:00:00Z"
-            if not attrib_changes:
+            
+            if attrib_changes:
+                changes["attrib"] = attrib_changes
+
+            if not changes:
                 return {"status": "no_change"}
+
             operations = [{
                 "type": "update",
                 "entityType": "task",
                 "entityId": task_id,
-                "data": {"attrib": attrib_changes}
+                "data": changes
             }]
             self.api.send_batch_operations(project_name, operations)
             tracking_cache.clear()
             return {"status": "ok"}
         except Exception as e:
-            logger.error(f"Failed to update task dates for {task_id}: {e}", exc_info=True)
+            logger.error(f"Failed to update task {task_id}: {e}", exc_info=True)
             return {"status": "error", "detail": str(e)}
-        return {"status": "success", "updated_count": len(operations)}
+
+    def get_project_users(self, project_name: str) -> list:
+        """Returns a list of all user names associated with the project."""
+        try:
+            # ayon_api.get_users() often returns a generator.
+            users = list(self.api.get_users())
+            return sorted([u["name"] for u in users if u.get("active", True) and "name" in u])
+        except Exception as e:
+            logger.error(f"Error fetching users for {project_name}: {e}")
+            return []

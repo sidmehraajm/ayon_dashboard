@@ -1,15 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-    --bg-base: #2e293a31;
+    --bg-base: #121212;
     /* User request 46,41,58 */
-    --panel-bg: #3d354b9f;
+    --panel-bg: #1e1e1e;
     /* User request 61,53,75 */
-    --panel-border: #5b496563;
+    --panel-border: #333333;
     /* User request 91,73,101 */
     --text-primary: #f4f4f5;
     /* light text maintained for readability */
-    --text-secondary: #baa5c7;
+    --text-secondary: #a1a1aa;
     /* User request 113,98,122 applied to muted assets */
     --accent-teal: #1aa192;
     --accent-teal-hover: #22b19e;
@@ -40,7 +40,7 @@ body {
     margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: var(--bg-base);
-    background-image: radial-gradient(circle at 50% 0%, rgba(63, 63, 70, 0.4) 0%, rgba(24, 24, 27, 1) 80%);
+    /* gradient removed */
     background-attachment: fixed;
     color: var(--text-primary);
 }
@@ -661,7 +661,7 @@ main {
     user-select: none;
     transition: background 0.15s;
 }
-.gantt-asset-row:hover { background: rgba(90,75,105,0.3); }
+.gantt-asset-row:hover { background: rgba(63,63,70,0.3); }
 .gantt-expand-arrow {
     transition: transform 0.2s;
     font-size: 0.65rem;
@@ -676,7 +676,7 @@ main {
     height: 36px;
     font-size: 0.78rem;
     color: var(--text-secondary);
-    border-bottom: 1px solid rgba(91,73,101,0.3);
+    border-bottom: 1px solid rgba(63,63,70,0.3);
     user-select: none;
     overflow: hidden;
     white-space: nowrap;
@@ -718,7 +718,7 @@ main {
     color: var(--text-secondary);
     text-align: center;
     padding: 4px 0;
-    border-right: 1px solid rgba(91,73,101,0.2);
+    border-right: 1px solid rgba(63,63,70,0.2);
     line-height: 1.1;
 }
 .gantt-day-cell.today {
@@ -727,7 +727,7 @@ main {
     font-weight: 700;
 }
 .gantt-day-cell.weekend {
-    background: rgba(61,53,75,0.5);
+    background: rgba(39,39,42,0.5);
 }
 
 /* Bars area */
@@ -738,10 +738,10 @@ main {
     position: absolute;
     left: 0;
     right: 0;
-    border-bottom: 1px solid rgba(91,73,101,0.2);
+    border-bottom: 1px solid rgba(63,63,70,0.2);
 }
-.gantt-row-bg.asset { background: rgba(61,53,75,0.25); border-bottom-color: rgba(91,73,101,0.5); }
-.gantt-row-bg.asset:hover { background: rgba(90,75,105,0.2); }
+.gantt-row-bg.asset { background: rgba(39,39,42,0.25); border-bottom-color: rgba(63,63,70,0.5); }
+.gantt-row-bg.asset:hover { background: rgba(63,63,70,0.2); }
 
 /* Today vertical line */
 .gantt-today-line {
@@ -805,21 +805,84 @@ main {
     cursor: default;
 }
 
-/* Tooltip */
 #gantt-tooltip {
     position: fixed;
     background: #1a1523;
     border: 1px solid var(--panel-border);
     border-radius: 8px;
-    padding: 8px 14px;
-    font-size: 0.8rem;
+    padding: 10px 16px;
+    font-size: 0.85rem;
     color: var(--text-primary);
     pointer-events: none;
     z-index: 9999;
     display: none;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.7);
+}
+.gantt-tooltip-assignees {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+.gantt-tag {
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.7rem;
+    color: var(--accent-teal);
+    border: 1px solid rgba(26,161,146,0.3);
 }
 
 /* View mode buttons */
 .gantt-view-btn { opacity: 0.55; padding: 6px 14px; font-size: 0.78rem; }
 .gantt-view-btn.active { opacity: 1; box-shadow: 0 0 8px rgba(26,161,146,0.5); }
+
+/* Double-click hint */
+.gantt-bar:active { cursor: grabbing; }
+.gantt-bar::after {
+    content: "•••";
+    position: absolute;
+    right: 12px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-size: 0.8rem;
+    pointer-events: none;
+}
+.gantt-bar:hover::after { opacity: 0.4; }
+
+/* Modal specific overrides for Gantt */
+#gantt-task-modal select[multiple] {
+    scrollbar-width: thin;
+}
+#gantt-task-modal select[multiple] option {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+#gantt-task-modal select[multiple] option:checked {
+    background: var(--accent-teal) !important;
+    color: white;
+}
+
+/* Sidebar initials */
+.gantt-assignee-initials {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+    padding-left: 8px;
+}
+.initial-circle {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--panel-border);
+    color: var(--text-secondary);
+    font-size: 0.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    text-transform: uppercase;
+    border: 1px solid rgba(255,255,255,0.1);
+}

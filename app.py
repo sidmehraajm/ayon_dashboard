@@ -64,16 +64,27 @@ def get_lifecycle(project_name: str, folder_id: str):
     """Returns chronologically ordered publish history for an asset."""
     return extractor.get_asset_lifecycle(project_name, folder_id)
 
-class TaskDatePayload(BaseModel):
+class TaskPropertiesPayload(BaseModel):
     project_name: str
     task_id: str
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    status: Optional[str] = None
+    assignees: Optional[List[str]] = None
 
 @app.post("/api/metrics/planner/update")
-def planner_update_dates(payload: TaskDatePayload):
-    """Endpoint called when user drags/resizes a Gantt bar to persist new dates."""
-    return extractor.update_task_dates(
-        payload.project_name, payload.task_id,
-        payload.start_date or "", payload.end_date or ""
+def planner_update_properties(payload: TaskPropertiesPayload):
+    """Endpoint called when user drags/resizes a Gantt bar or uses the properties modal."""
+    return extractor.update_task_properties(
+        payload.project_name, 
+        payload.task_id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        status=payload.status,
+        assignees=payload.assignees
     )
+
+@app.get("/api/projects/{project_name}/users")
+def get_project_users(project_name: str):
+    """Returns a list of all artists/users for the project."""
+    return extractor.get_project_users(project_name)

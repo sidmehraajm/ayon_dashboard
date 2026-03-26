@@ -5,17 +5,17 @@ let gridApi = null;
 let chartInstance = null;
 let overviewPieInstance = null;
 let lifecycleLineInstance = null;
-let globalRawTrackingData = {}; 
+let globalRawTrackingData = {};
 let allProjects = [];
 
 // Global states for Artist filtering
 let currentArtistData = {};
-let filteredModalData = {}; 
-let currentProjectStatuses = []; 
+let filteredModalData = {};
+let currentProjectStatuses = [];
 
 document.addEventListener("DOMContentLoaded", async () => {
     await loadProjects();
-    
+
     // FIXED: Bulletproof Asset Typing Search
     document.getElementById('asset-search').addEventListener('input', async (e) => {
         if (gridApi) {
@@ -32,7 +32,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById('artist-selector').addEventListener('change', applyArtistFilters);
     document.getElementById('artist-asset-filter').addEventListener('change', applyArtistFilters);
     document.getElementById('artist-status-filter').addEventListener('change', applyArtistFilters);
-    
+
     // Close Custom Dropdown on Outside Click
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.custom-dropdown')) {
@@ -63,16 +63,16 @@ async function loadProjects() {
     try {
         const response = await fetch("/api/projects");
         allProjects = await response.json();
-        
+
         const assetSelector = document.getElementById("asset-project-selector");
         const artistSelector = document.getElementById("artist-project-selector");
         const dailySelector = document.getElementById("daily-project-selector");
         const overviewSelector = document.getElementById("overview-project-selector");
         const lifecycleSelector = document.getElementById("lifecycle-project-selector");
-        
+
         let assetHtml = "";
         let globalHtml = `<option value="ALL" selected>-- ALL PROJECTS --</option>`;
-        
+
         allProjects.forEach(proj => {
             const opt = `<option value="${proj}">${proj}</option>`;
             assetHtml += opt;
@@ -91,7 +91,7 @@ async function loadProjects() {
         if (allProjects.length > 0) {
             loadTrackingData(allProjects[0]);
             assetSelector.addEventListener("change", (e) => loadTrackingData(e.target.value));
-            
+
             if (overviewSelector) {
                 overviewSelector.addEventListener("change", (e) => loadOverviewData(e.target.value));
                 loadOverviewData(allProjects[0]);
@@ -120,12 +120,12 @@ async function loadTrackingData(projectName) {
     try {
         const response = await fetch(`/api/metrics/tracking/${projectName}`);
         const payload = await response.json();
-        
+
         globalRawTrackingData = payload.tracking_data;
         currentTrackingStatuses = payload.all_statuses; // The official statuses from Ayon
-        
+
         populateAssetSearchDropdown();
-        buildStatusCheckboxes(); 
+        buildStatusCheckboxes();
     } catch (error) { console.error("Tracking Data Error:", error); }
 }
 
@@ -144,12 +144,12 @@ function buildStatusCheckboxes() {
     const container = document.getElementById('status-checkboxes');
     const bulkSelect = document.getElementById('bulk-status-select');
     const deliverySelect = document.getElementById('delivery-status-selector');
-    
+
     let containerHtml = "";
     let bulkSelectHtml = '<option value="">-- Do Not Change Status --</option>';
     let deliverySelectHtml = '<option value="">-- Use Target Criteria --</option>';
     let overviewHtml = "";
-    
+
     const overviewExcluded = ['not ready', 'on hold', 'remove', 'omitted'];
 
     // Build the lists using the OFFICIAL statuses from the schema
@@ -157,20 +157,20 @@ function buildStatusCheckboxes() {
         const s = status.toLowerCase();
         const isChecked = s.includes('approve') || s.includes('final') || s.includes('done') || s.includes('deliver') ? 'checked' : '';
         const overviewChecked = overviewExcluded.includes(s) ? '' : 'checked';
-        
+
         containerHtml += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${isChecked} onchange="recalculateHealth()"> ${status}</label>`;
         bulkSelectHtml += `<option value="${status}">${status}</option>`;
         deliverySelectHtml += `<option value="${status}">${status}</option>`;
         overviewHtml += `<label class="dropdown-item"><input type="checkbox" value="${status}" ${overviewChecked} onchange="recalculateOverviewPieChart()"> ${status}</label>`;
     });
-    
+
     container.innerHTML = containerHtml;
     if (bulkSelect) bulkSelect.innerHTML = bulkSelectHtml;
     if (deliverySelect) deliverySelect.innerHTML = deliverySelectHtml;
-    
+
     const overviewContainer = document.getElementById('overview-status-checkboxes');
     if (overviewContainer) overviewContainer.innerHTML = overviewHtml;
-    
+
     recalculateHealth();
     recalculateOverviewPieChart();
 }
@@ -181,19 +181,19 @@ function getSelectedStatuses() {
 
 function calculateDelay(endDateStr, updatedAtStr, isDelivered) {
     if (!endDateStr) return { text: "N/A", color: "" };
-    
+
     if (!isDelivered) {
         const diffTime = Date.now() - new Date(endDateStr);
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         if (diffDays > 0) return { text: `${diffDays} Days Late (Pending)`, color: "#ef4444" };
         else return { text: "Pending", color: "" };
     }
-    
+
     if (!updatedAtStr) return { text: "Delivered", color: "#10b981" };
-    
+
     const diffTime = new Date(updatedAtStr) - new Date(endDateStr);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays <= 0) return { text: "On Time", color: "#10b981" };
     return { text: `${diffDays} Days Late`, color: "#f59e0b" };
 }
@@ -202,7 +202,7 @@ function recalculateHealth() {
     const completedStatuses = getSelectedStatuses();
     const referenceStatusSelect = document.getElementById('delivery-status-selector');
     const referenceStatus = referenceStatusSelect ? referenceStatusSelect.value.toLowerCase() : "";
-    
+
     const rowData = [];
     let totalTasksGlobal = 0;
     let completedTasksGlobal = 0;
@@ -215,7 +215,7 @@ function recalculateHealth() {
             folder.tasks.forEach(task => {
                 const taskStatus = task.status.toLowerCase();
                 if (completedStatuses.includes(taskStatus)) completedTasks++;
-                
+
                 let isDelivered = false;
                 if (referenceStatus !== "") {
                     // Use exclusively the selected reference status, OR if it's already in the completed criteria
@@ -223,7 +223,7 @@ function recalculateHealth() {
                 } else {
                     isDelivered = completedStatuses.includes(taskStatus);
                 }
-                
+
                 const delayData = calculateDelay(task.end_date, task.updated_at, isDelivered);
                 task.delay_text = delayData.text;
                 task.delay_color = delayData.color;
@@ -251,12 +251,12 @@ let currentPieStatusManifest = {};
 function recalculateOverviewPieChart() {
     const overviewContainer = document.getElementById('overview-status-checkboxes');
     if (!overviewContainer) return;
-    
+
     currentPieStatusManifest = {};
     const includedStatuses = Array.from(overviewContainer.querySelectorAll('input:checked')).map(cb => cb.value.toLowerCase());
     const statusCounts = {};
     includedStatuses.forEach(s => statusCounts[s] = 0);
-    
+
     Object.values(globalRawTrackingData).forEach(folder => {
         if (folder.tasks) {
             folder.tasks.forEach(task => {
@@ -274,12 +274,12 @@ function recalculateOverviewPieChart() {
             });
         }
     });
-    
+
     const labels = [];
     const data = [];
     const bgColors = [];
     const materialColors = ['#1aa192', '#099c6b', '#9b5050', '#7a7990', '#42a5f5', '#ffa726', '#ab47bc', '#ec407a', '#26c6da', '#d4e157', '#66bb6a', '#ffca28'];
-    
+
     Object.keys(statusCounts).forEach((s, i) => {
         if (statusCounts[s] > 0) {
             labels.push(s.toUpperCase());
@@ -287,7 +287,7 @@ function recalculateOverviewPieChart() {
             bgColors.push(materialColors[i % materialColors.length]);
         }
     });
-    
+
     renderOverviewPieChartDynamic(labels, data, bgColors);
 }
 
@@ -306,12 +306,12 @@ function renderMasterDetailGrid(rowData) {
         onSelectionChanged: handleTaskSelection, // Listener for Asset Selection
         detailCellRendererParams: {
             detailGridOptions: {
-                rowSelection: 'multiple', 
+                rowSelection: 'multiple',
                 onSelectionChanged: handleTaskSelection, // Listener for Task Selection
                 columnDefs: [
                     { field: 'task_name', headerName: 'Task Name', flex: 1.5, checkboxSelection: true, headerCheckboxSelection: true },
                     { field: 'assignees', valueFormatter: p => p.value && p.value.length > 0 ? p.value.join(', ') : 'Unassigned', flex: 1 },
-                    { 
+                    {
                         field: 'status', flex: 1,
                         cellRenderer: params => {
                             const val = params.value ? params.value.toLowerCase() : '';
@@ -335,21 +335,21 @@ function renderMasterDetailGrid(rowData) {
             getDetailRowData: params => params.successCallback(params.data.tasks)
         },
         columnDefs: [
-            { 
-                field: "assetName", 
-                headerName: "Asset Name", 
-                cellRenderer: 'agGroupCellRenderer', 
+            {
+                field: "assetName",
+                headerName: "Asset Name",
+                cellRenderer: 'agGroupCellRenderer',
                 flex: 2,
                 checkboxSelection: true, // ADDS CHECKBOX TO THE PARENT ASSET
-                headerCheckboxSelection: true 
+                headerCheckboxSelection: true
             },
             { field: "assetType", headerName: "Type", flex: 1 },
-            { 
+            {
                 field: "health", headerName: "Completion Status", flex: 1, valueFormatter: p => p.value + "%",
                 cellStyle: params => {
                     if (params.value === 100) return { color: 'var(--accent-green)', fontWeight: 'bold' };
                     if (params.value > 0) return { color: 'var(--accent-blue)' };
-                    return { color: 'var(--text-secondary)' }; 
+                    return { color: 'var(--text-secondary)' };
                 }
             }
         ],
@@ -363,7 +363,7 @@ function renderMasterDetailGrid(rowData) {
 // ==========================================
 function handleTaskSelection() {
     let selectedTasks = new Set();
-    
+
     // 1. Gather all tasks from selected Parent Assets
     if (gridApi) {
         const selectedAssets = gridApi.getSelectedRows();
@@ -372,9 +372,9 @@ function handleTaskSelection() {
                 asset.tasks.forEach(t => selectedTasks.add(t.task_id));
             }
         });
-        
+
         // 2. Gather any individually selected Tasks inside expanded rows
-        gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+        gridApi.forEachDetailGridInfo(function (detailGridInfo) {
             const selectedChildRows = detailGridInfo.api.getSelectedRows();
             selectedChildRows.forEach(t => selectedTasks.add(t.task_id));
         });
@@ -382,7 +382,7 @@ function handleTaskSelection() {
 
     const selectedCount = selectedTasks.size;
     const actionBar = document.getElementById('bulk-action-bar');
-    
+
     if (actionBar) {
         if (selectedCount > 0) {
             document.getElementById('selected-task-count').innerText = selectedCount;
@@ -396,13 +396,13 @@ function handleTaskSelection() {
 function clearSelection() {
     if (gridApi) {
         gridApi.deselectAll(); // Deselect Parent Assets
-        gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+        gridApi.forEachDetailGridInfo(function (detailGridInfo) {
             detailGridInfo.api.deselectAll(); // Deselect Child Tasks
         });
     }
     document.getElementById('bulk-status-select').value = "";
     document.getElementById('bulk-date-select').value = "";
-    handleTaskSelection(); 
+    handleTaskSelection();
 }
 
 async function executeBulkUpdate() {
@@ -416,7 +416,7 @@ async function executeBulkUpdate() {
     }
 
     let tasksToUpdateMap = new Map();
-    
+
     // Harvest from Parent Assets
     gridApi.getSelectedRows().forEach(asset => {
         if (asset.tasks) {
@@ -429,7 +429,7 @@ async function executeBulkUpdate() {
     });
 
     // Harvest from Individual Task Rows
-    gridApi.forEachDetailGridInfo(function(detailGridInfo) {
+    gridApi.forEachDetailGridInfo(function (detailGridInfo) {
         const selectedRows = detailGridInfo.api.getSelectedRows();
         selectedRows.forEach(task => {
             tasksToUpdateMap.set(task.task_id, {
@@ -442,7 +442,7 @@ async function executeBulkUpdate() {
     if (tasksToUpdate.length === 0) return;
 
     document.getElementById("project-health-summary").innerText = "Pushing batch updates to Ayon...";
-    
+
     try {
         const response = await fetch("/api/metrics/bulk_update", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -451,7 +451,7 @@ async function executeBulkUpdate() {
 
         if (response.ok) {
             clearSelection();
-            await loadTrackingData(activeProject); 
+            await loadTrackingData(activeProject);
         } else {
             throw new Error("Server rejected the update.");
         }
@@ -468,19 +468,19 @@ async function executeBulkUpdate() {
 async function loadArtistData() {
     const selector = document.getElementById("artist-project-selector");
     let selectedProjects = Array.from(selector.selectedOptions).map(opt => opt.value);
-    
+
     if (selectedProjects.includes("ALL")) selectedProjects = allProjects;
 
     try {
         const response = await fetch("/api/metrics/artists", {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: selectedProjects })
         });
-        
+
         const payload = await response.json();
-        
+
         currentArtistData = payload.artists;
         currentProjectStatuses = payload.all_statuses;
-        
+
         populateArtistDropdowns();
         applyArtistFilters();
     } catch (error) { console.error("Artist Data Error:", error); }
@@ -492,7 +492,7 @@ function populateArtistDropdowns() {
     const statusDropdown = document.getElementById("artist-status-filter");
 
     const uniqueAssets = new Set();
-    
+
     let artistHtml = `<option value="ALL">-- Global View --</option>`;
     Object.keys(currentArtistData).sort().forEach(artist => {
         artistHtml += `<option value="${artist}">${artist}</option>`;
@@ -523,7 +523,7 @@ function applyArtistFilters() {
 
     const labels = [];
     const publishCounts = [];
-    filteredModalData = {}; 
+    filteredModalData = {};
 
     Object.keys(currentArtistData).sort().forEach(artist => {
         if (selectedArtist !== "ALL" && artist !== selectedArtist) return;
@@ -536,7 +536,7 @@ function applyArtistFilters() {
         if (validPublishes.length > 0) {
             labels.push(artist);
             publishCounts.push(validPublishes.length);
-            filteredModalData[artist] = validPublishes; 
+            filteredModalData[artist] = validPublishes;
         }
     });
 
@@ -553,18 +553,18 @@ function renderArtistChart(labels, publishCounts) {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Filtered Iterations', 
+                label: 'Filtered Iterations',
                 data: publishCounts,
                 backgroundColor: 'rgba(59, 130, 246, 0.8)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 4
             }]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            scales: { 
-                y: { beginAtZero: true, grid: { color: '#2d313f' }, ticks: { color: '#94a3b8' } }, 
-                x: { grid: { display: false }, ticks: { color: '#e2e8f0' } } 
+            scales: {
+                y: { beginAtZero: true, grid: { color: '#2d313f' }, ticks: { color: '#94a3b8' } },
+                x: { grid: { display: false }, ticks: { color: '#e2e8f0' } }
             },
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' Iterations'; } } } },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (context) { return context.raw + ' Iterations'; } } } },
             onClick: (event, elements) => {
                 if (elements.length > 0) {
                     const index = elements[0].index;
@@ -579,9 +579,9 @@ function openArtistModal(artistName) {
     document.getElementById('modal-title').innerText = `${artistName} - Filtered Iterations`;
     const tbody = document.getElementById('modal-tbody');
     tbody.innerHTML = "";
-    
+
     const publishes = filteredModalData[artistName] || [];
-    
+
     if (publishes.length === 0) {
         tbody.innerHTML = "<tr><td colspan='7'>No iterations found matching current filters.</td></tr>";
     } else {
@@ -590,7 +590,7 @@ function openArtistModal(artistName) {
             const dateStr = pub.date ? new Date(pub.date).toLocaleString() : "N/A";
             const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
             const ayonLink = generateAyonLink(pub.project, pub.folder_id);
-            
+
             rowsHtml += `
                 <tr>
                     <td>${pub.project}</td>
@@ -625,7 +625,7 @@ async function loadDailyReport() {
         const response = await fetch("/api/metrics/daily", {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: selectedProjects })
         });
-        
+
         const reportData = await response.json();
         container.innerHTML = "";
 
@@ -638,7 +638,7 @@ async function loadDailyReport() {
         Object.keys(reportData).forEach(project => {
             const projData = reportData[project];
             let rowsHtml = "";
-            
+
             projData.publishes.forEach(pub => {
                 const dateStr = pub.date ? new Date(pub.date).toLocaleTimeString() : "N/A";
                 const statusClass = pub.status.toLowerCase().includes('approve') ? 'pill-green' : 'pill-yellow';
@@ -693,12 +693,12 @@ async function loadDailyReport() {
 function renderOverviewPieChartDynamic(labels, data, bgColors) {
     const ctx = document.getElementById('overviewPieChart');
     if (!ctx) return;
-    
+
     if (overviewPieInstance) overviewPieInstance.destroy();
-    
+
     Chart.defaults.color = '#71627a';
     Chart.defaults.font.family = 'Inter';
-    
+
     overviewPieInstance = new Chart(ctx.getContext('2d'), {
         type: 'doughnut',
         data: {
@@ -716,7 +716,7 @@ function renderOverviewPieChartDynamic(labels, data, bgColors) {
             cutout: '70%',
             plugins: {
                 legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, boxWidth: 8 } },
-                tooltip: { callbacks: { label: function(context) { return context.raw + ' Tasks'; } } }
+                tooltip: { callbacks: { label: function (context) { return context.raw + ' Tasks'; } } }
             },
             onClick: (event, elements) => {
                 if (elements.length > 0 && labels.length > 0 && labels[0] !== 'No Data') {
@@ -733,7 +733,7 @@ function openPieChartDetails(status, tasksArray) {
     document.getElementById('pie-modal-title').innerText = `Status: ${status.toUpperCase()}`;
     const tbody = document.getElementById('pie-modal-tbody');
     const activeProject = document.getElementById("asset-project-selector").value;
-    
+
     if (tasksArray.length === 0) {
         tbody.innerHTML = "<tr><td colspan='4'>No tasks found for this status.</td></tr>";
     } else {
@@ -759,10 +759,10 @@ function closePieModal() { document.getElementById('pie-modal').style.display = 
 function openPublishDetails(task, version, commentRaw, author, dateRaw, folderId) {
     const comment = decodeURIComponent(commentRaw);
     document.getElementById('publish-modal-author').innerText = decodeURIComponent(author);
-    
+
     const d = new Date(dateRaw);
     document.getElementById('publish-modal-date').innerText = d.toLocaleDateString() + ' @ ' + d.toLocaleTimeString();
-    
+
     const commentDiv = document.getElementById('publish-modal-comment');
     commentDiv.innerText = comment ? comment : "No comments attached to this publish version via Ayon hooks.";
     if (!comment) {
@@ -772,11 +772,11 @@ function openPublishDetails(task, version, commentRaw, author, dateRaw, folderId
         commentDiv.style.color = "#fff";
         commentDiv.style.fontStyle = "normal";
     }
-    
+
     const activeProject = document.getElementById("lifecycle-project-selector").value;
     const ayonLink = generateAyonLink(activeProject, folderId);
     document.getElementById('publish-modal-ayon-btn').href = ayonLink;
-    
+
     document.getElementById('publish-modal').style.display = 'flex';
 }
 
@@ -788,26 +788,26 @@ async function loadOverviewData(projectName) {
         document.getElementById("asset-project-selector").value = projectName;
         await loadTrackingData(projectName);
     }
-    
+
     const feedContainer = document.getElementById("overview-feed");
     if (!feedContainer) return;
 
     feedContainer.innerHTML = "<p style='color:var(--text-secondary);'>Scanning network...</p>";
-    
+
     try {
         const response = await fetch("/api/metrics/daily", {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projects: [projectName] })
         });
         const data = await response.json();
-        
+
         if (!data[projectName] || data[projectName].publishes.length === 0) {
             feedContainer.innerHTML = "<p style='color:var(--text-secondary); padding: 20px;'>No isolated publishes in the last 24h.</p>";
             return;
         }
-        
+
         let html = "";
         data[projectName].publishes.forEach(pub => {
-            const timeStr = pub.date ? new Date(pub.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
+            const timeStr = pub.date ? new Date(pub.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "";
             const statusColor = pub.status.toLowerCase().includes('approve') ? 'var(--accent-green)' : 'var(--accent-teal)';
             html += `
                 <div class="feed-item">
@@ -824,7 +824,7 @@ async function loadOverviewData(projectName) {
             `;
         });
         feedContainer.innerHTML = html;
-        
+
     } catch (e) {
         console.error("Overview feed error:", e);
         feedContainer.innerHTML = "<p style='color:var(--accent-red);'>Secure connection failed.</p>";
@@ -836,17 +836,17 @@ async function loadLifecycleAssets(projectName) {
     if (!list) return;
 
     list.innerHTML = '<option value="">Establish secure link...</option>';
-    
+
     try {
         const response = await fetch(`/api/metrics/tracking/${projectName}`);
         const payload = await response.json();
-        
+
         let html = '<option value="">-- Select Target Asset --</option>';
         Object.values(payload.tracking_data).forEach(folder => {
             html += `<option value="${folder.asset_id}">${folder.name}</option>`;
         });
         list.innerHTML = html;
-        
+
         if (lifecycleLineInstance) {
             lifecycleLineInstance.destroy();
             lifecycleLineInstance = null;
@@ -858,27 +858,27 @@ async function loadLifecycleChart(projectName, folderId) {
     if (!folderId) return;
     const container = document.getElementById('lifecycle-timeline');
     if (!container) return;
-    
+
     container.innerHTML = "<div style='padding: 40px; color: var(--text-secondary);'>Retrieving chronological lifecycle...</div>";
-    
+
     try {
         const response = await fetch(`/api/metrics/lifecycle/${projectName}/${folderId}`);
         const data = await response.json();
         const timeline = data.lifecycle;
-        
+
         if (timeline.length === 0) {
             container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>No chronological telemetry found for this asset.</div>";
             return;
         }
 
         let html = "";
-        
+
         const uniqueEvents = [];
         const seenSignatures = new Set();
 
         timeline.forEach(t => {
             if (t.event_type === 'publish') {
-                const timeKey = t.date.substring(0, 16); 
+                const timeKey = t.date.substring(0, 16);
                 const sig = `publish_${t.task}_${t.version}_${timeKey}`;
                 if (!seenSignatures.has(sig)) {
                     uniqueEvents.push(t);
@@ -888,19 +888,19 @@ async function loadLifecycleChart(projectName, folderId) {
                 uniqueEvents.push(t);
             }
         });
-        
+
         const columns = {};
-        
+
         uniqueEvents.forEach(t => {
             if (t.event_type === 'assignment' && (t.author === 'Unassigned' || !t.author)) return;
-            
+
             const colName = t.event_type === 'creation' ? 'Asset Initialization' : t.task;
             if (!columns[colName]) columns[colName] = [];
             columns[colName].push(t);
         });
-        
+
         html += `<div class="kanban-board" style="display: flex; gap: 30px; overflow-x: auto; padding-bottom: 20px; align-items: flex-start;">`;
-        
+
         // A column is considered "active" if it has at least one real event:
         //   - a publish, OR
         //   - an assignment with an actual artist (non-empty, non-'Unassigned'), OR
@@ -935,26 +935,26 @@ async function loadLifecycleChart(projectName, folderId) {
             // Respect the task filter checkboxes if they exist
             const cb = filterContainer && filterContainer.querySelector(`input[value="${col}"]`);
             return cb ? cb.checked : isActiveCol(col);
-        }).sort((a,b) => {
+        }).sort((a, b) => {
             if (a === 'Asset Initialization') return -1;
             if (b === 'Asset Initialization') return 1;
             return a.localeCompare(b);
         });
-        
+
         colNames.forEach(col => {
             html += `<div class="timeline-column" style="display: flex; flex-direction: column; min-width: 380px; max-width: 440px; padding-right: 10px;">`;
             html += `<div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--panel-border); color: var(--text-primary); text-transform: uppercase;">${col}</div>`;
             html += `<div class="timeline-container" style="padding: 0 0 20px 0;">`;
-            
+
             columns[col].forEach(t => {
                 const dateObj = new Date(t.date);
-                const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
-                const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-                
+                const dateOnly = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                const timeOnly = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
                 let statusColor = '#9e9e9e';
                 let titleHtml = '';
                 let extraParams = '';
-                
+
                 if (t.event_type === 'creation') {
                     statusColor = '#26a69a'; // Material Teal
                     titleHtml = `<span class="timeline-title-prefix">Asset Created:</span> ${t.task}`;
@@ -969,13 +969,13 @@ async function loadLifecycleChart(projectName, folderId) {
                     statusColor = '#42a5f5'; // Material Blue
                     titleHtml = `<span class="timeline-title-prefix">Publish ${t.version || ''}:</span> ${t.task} <span style="font-size: 0.85em; opacity: 0.7;">(${t.department})</span>`;
                     titleHtml += ` <span style="font-size:0.75em; border: 1px solid var(--panel-border); border-radius: 4px; padding: 2px 6px; margin-left: 5px; color: var(--text-secondary); background: rgba(255,255,255,0.05);">Details</span>`;
-                    
+
                     const safeComment = encodeURIComponent(t.comment || "");
                     const safeTask = encodeURIComponent(t.task || "");
                     const safeAuthor = encodeURIComponent(t.author || "");
                     extraParams = `style="cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'" onclick="openPublishDetails('${safeTask}', '${t.version || ''}', '${safeComment}', '${safeAuthor}', '${t.date}', '${t.folder_id}')"`;
                 }
-                
+
                 html += `
                     <div class="timeline-node" ${extraParams}>
                         <div class="timeline-point" style="background: ${statusColor}; box-shadow: 0 0 10px ${statusColor}80;"></div>
@@ -1004,13 +1004,13 @@ async function loadLifecycleChart(projectName, folderId) {
                     </div>
                 `;
             });
-            
+
             html += `</div></div>`;
         });
-        
+
         html += `</div>`;
         container.innerHTML = html;
-        
+
     } catch (e) {
         console.error("Lifecycle telemetry failed:", e);
         container.innerHTML = "<div style='padding: 40px; color: var(--accent-red);'>Connection closed.</div>";
@@ -1024,24 +1024,25 @@ let ganttState = {
     projectName: '',
     assets: [],          // Processed asset rows
     viewMode: 'month',   // 'week' | 'month' | 'quarter'
-    dayWidth: 28,
+    dayWidth: 40,        // Increased from 28
     expandedAssets: new Set(),
-    ganttStart: null,    // JS Date — left edge of the visible timeline
+    ganttStart: null,
     ganttEnd: null,
     rowHeight: { asset: 44, task: 36 },
-    headerHeight: 60,    // month-row + day-row
+    headerHeight: 60,
+    projectUsers: [],    // Cache for artist assignment
 };
 
 const STATUS_COLORS = {
-    'approved': '#099c6b',
-    'complete': '#1aa192',
-    'done':     '#1aa192',
+    'approved': '#00ff6281',
+    'complete': '#00fff2b4',
+    'done': '#66ff0060',
     'in progress': '#2962ff',
     'in_progress': '#2962ff',
-    'correction': '#ef6c00',
+    'correction': '#ef3000ff',
     'review': '#7b1fa2',
     'pending review': '#7b1fa2',
-    'not ready': '#5b4965',
+    'not ready': '#3f3f46',
     'on hold': '#78716c',
     'default': '#42a5f5',
 };
@@ -1076,16 +1077,28 @@ function ganttOffsetOfDate(dateStr) {
     return ganttDaysBetween(ganttState.ganttStart, d);
 }
 
+function getGanttInitials(name) {
+    if (!name) return "?";
+    const parts = name.split(/[._\s]/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
+}
+
 async function loadPlannerData(projectName) {
     if (!projectName) return;
     ganttState.projectName = projectName;
 
+    // Also fetch users for this project for the assignment modal
+    fetch(`/api/projects/${projectName}/users`).then(r => r.json()).then(u => {
+        ganttState.projectUsers = u;
+    });
+
     const sidebar = document.getElementById('gantt-sidebar-rows');
     const barsArea = document.getElementById('gantt-bars-area');
-    const header   = document.getElementById('gantt-header');
+    const header = document.getElementById('gantt-header');
     sidebar.innerHTML = `<div style="padding:20px;color:var(--text-secondary);">Loading project data...</div>`;
     barsArea.innerHTML = '';
-    header.innerHTML   = '';
+    header.innerHTML = '';
 
     try {
         const resp = await fetch(`/api/metrics/tracking/${projectName}`, { headers: { 'Cache-Control': 'no-cache' } });
@@ -1097,20 +1110,20 @@ async function loadPlannerData(projectName) {
             const tasks = (asset.tasks || []).map(t => ({
                 ...t,
                 start: t.start_date ? t.start_date.slice(0, 10) : null,
-                end:   t.end_date   ? t.end_date.slice(0, 10)   : null,
+                end: t.end_date ? t.end_date.slice(0, 10) : null,
             }));
 
             // Asset summary bar = min task start → max task end
             const taskStarts = tasks.map(t => t.start).filter(Boolean).sort();
-            const taskEnds   = tasks.map(t => t.end).filter(Boolean).sort();
+            const taskEnds = tasks.map(t => t.end).filter(Boolean).sort();
             return {
-                id:     asset.asset_id,
-                name:   asset.name,
-                path:   asset.path,
-                type:   asset.type,
+                id: asset.asset_id,
+                name: asset.name,
+                path: asset.path,
+                type: asset.type,
                 tasks,
                 assetStart: taskStarts[0] || null,
-                assetEnd:   taskEnds[taskEnds.length - 1] || null,
+                assetEnd: taskEnds[taskEnds.length - 1] || null,
             };
         }).sort((a, b) => a.path.localeCompare(b.path));
 
@@ -1120,7 +1133,7 @@ async function loadPlannerData(projectName) {
         const allDates = [];
         assets.forEach(a => {
             if (a.assetStart) allDates.push(new Date(a.assetStart));
-            if (a.assetEnd)   allDates.push(new Date(a.assetEnd));
+            if (a.assetEnd) allDates.push(new Date(a.assetEnd));
         });
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -1130,7 +1143,7 @@ async function loadPlannerData(projectName) {
         minDate.setDate(minDate.getDate() - 14);
         maxDate.setDate(maxDate.getDate() + 30);
         ganttState.ganttStart = minDate;
-        ganttState.ganttEnd   = maxDate;
+        ganttState.ganttEnd = maxDate;
 
         renderGantt();
     } catch (e) {
@@ -1141,19 +1154,33 @@ async function loadPlannerData(projectName) {
 
 function renderGantt() {
     const { assets, ganttStart, ganttEnd, dayWidth, rowHeight, expandedAssets } = ganttState;
-    const totalDays   = ganttDaysBetween(ganttStart, ganttEnd) + 1;
-    const totalWidth  = totalDays * dayWidth;
+    const totalDays = ganttDaysBetween(ganttStart, ganttEnd) + 1;
+    const totalWidth = totalDays * dayWidth;
 
-    const sidebar  = document.getElementById('gantt-sidebar-rows');
+    const sidebar = document.getElementById('gantt-sidebar-rows');
     const barsArea = document.getElementById('gantt-bars-area');
-    const header   = document.getElementById('gantt-header');
+    const header = document.getElementById('gantt-header');
 
     // ---- Build rows list ----
+    const search = (document.getElementById('gantt-search')?.value || '').toLowerCase();
     const rows = []; // { type:'asset'|'task', data, assetId }
     assets.forEach(a => {
+        const matchesAsset = a.name.toLowerCase().includes(search) || a.path.toLowerCase().includes(search);
+        const matchingTasks = a.tasks.filter(t => t.task_name.toLowerCase().includes(search));
+
+        if (search && !matchesAsset && matchingTasks.length === 0) return;
+
         rows.push({ type: 'asset', data: a, assetId: a.id });
-        if (expandedAssets.has(a.id)) {
-            a.tasks.forEach(t => rows.push({ type: 'task', data: t, assetId: a.id }));
+
+        // If searching, auto-expand if tasks match or asset matches
+        const shouldExpand = expandedAssets.has(a.id) || (search && matchingTasks.length > 0);
+
+        if (shouldExpand) {
+            a.tasks.forEach(t => {
+                if (!search || t.task_name.toLowerCase().includes(search) || matchesAsset) {
+                    rows.push({ type: 'task', data: t, assetId: a.id });
+                }
+            });
         }
     });
 
@@ -1171,23 +1198,26 @@ function renderGantt() {
         dayCells.push(day);
         if (day.getMonth() !== curMonth) {
             if (curMonth !== -1) {
-                monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${new Date(ganttStart.getFullYear(), curMonth, 1).toLocaleString('default',{month:'short'})} ${day.getFullYear() !== ganttStart.getFullYear() ? new Date(ganttStart.getFullYear(), curMonth, 1).getFullYear() : ''}</div>`;
+                const displayYear = day.getFullYear();
+                const monthName = new Date(2000, curMonth, 1).toLocaleString('default', { month: 'long' });
+                monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${monthName} ${displayYear}</div>`;
             }
             curMonth = day.getMonth();
             curMonthCount = 0;
         }
         curMonthCount++;
     }
-    monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${new Date(ganttStart.getFullYear(), curMonth, 1).toLocaleString('default',{month:'short'})}</div>`;
+    const finalMonthName = new Date(2000, curMonth, 1).toLocaleString('default', { month: 'long' });
+    monthHtml += `<div class="gantt-month-cell" style="width:${curMonthCount * dayWidth}px">${finalMonthName} ${new Date(ganttStart).getFullYear()}</div>`;
     monthHtml += `</div>`;
 
     const todayOffset = ganttDaysBetween(ganttStart, new Date());
     let daysHtml = `<div class="gantt-days-row">`;
     dayCells.forEach((day, i) => {
-        const isToday   = (i === todayOffset);
-        const isWeekend = [0,6].includes(day.getDay());
+        const isToday = (i === todayOffset);
+        const isWeekend = [0, 6].includes(day.getDay());
         const cls = [isToday ? 'today' : '', isWeekend ? 'weekend' : ''].filter(Boolean).join(' ');
-        daysHtml += `<div class="gantt-day-cell ${cls}" style="width:${dayWidth}px">${day.getDate()}<br><span style="font-size:0.6rem;">${['Su','Mo','Tu','We','Th','Fr','Sa'][day.getDay()]}</span></div>`;
+        daysHtml += `<div class="gantt-day-cell ${cls}" style="width:${dayWidth}px">${day.getDate()}<br><span style="font-size:0.6rem;">${['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][day.getDay()]}</span></div>`;
     });
     daysHtml += `</div>`;
 
@@ -1219,10 +1249,12 @@ function renderGantt() {
         } else {
             const t = row.data;
             const dotColor = ganttStatusColor(t.status);
+            const initialsHtml = (t.assignees || []).map(u => `<div class="initial-circle" title="${u}">${getGanttInitials(u)}</div>`).join('');
             sidebarHtml += `
-                <div class="gantt-task-row" title="${t.task_name} • ${t.status}">
+                <div class="gantt-task-row" title="${t.task_name} • ${t.status} ${t.assignees?.length ? '• ' + t.assignees.join(', ') : ''}">
                     <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block;margin-right:8px;"></span>
-                    <span>${t.task_name}</span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.task_name}</span>
+                    <div class="gantt-assignee-initials">${initialsHtml}</div>
                 </div>`;
         }
 
@@ -1232,10 +1264,10 @@ function renderGantt() {
         // Bar
         if (isAsset) {
             const startOff = ganttOffsetOfDate(row.data.assetStart);
-            const endOff   = ganttOffsetOfDate(row.data.assetEnd);
+            const endOff = ganttOffsetOfDate(row.data.assetEnd);
             if (startOff !== null && endOff !== null) {
                 const barW = Math.max((endOff - startOff + 1) * dayWidth, 4);
-                const color = '#5b4965';
+                const color = '#3f3f46';
                 barsHtml += `
                     <div class="gantt-bar" style="left:${startOff * dayWidth}px; width:${barW}px; top:${rowTop + 9}px; background:${color}; opacity:0.7;">
                         <span>${row.data.name}</span>
@@ -1244,12 +1276,12 @@ function renderGantt() {
         } else {
             const t = row.data;
             const startOff = ganttOffsetOfDate(t.start);
-            const endOff   = ganttOffsetOfDate(t.end);
-            const color    = ganttStatusColor(t.status);
+            const endOff = ganttOffsetOfDate(t.end);
+            const color = ganttStatusColor(t.status);
 
             if (startOff !== null || endOff !== null) {
                 const sOff = startOff !== null ? startOff : (endOff - 1);
-                const eOff = endOff   !== null ? endOff   : (startOff + 1);
+                const eOff = endOff !== null ? endOff : (startOff + 1);
                 const barW = Math.max((eOff - sOff + 1) * dayWidth, 4);
                 const label = t.task_name;
                 barsHtml += `
@@ -1258,10 +1290,12 @@ function renderGantt() {
                          data-task-id="${t.task_id}"
                          data-asset-id="${row.assetId}"
                          data-start="${t.start || ''}"
-                         data-end="${t.end || ''}"
-                         style="left:${sOff * dayWidth}px; width:${barW}px; top:${rowTop + 5}px; height:26px; background:${color};"
-                         onmousedown="ganttBarMousedown(event, 'move')"
-                    >
+                          data-end="${t.end || ''}"
+                          data-assignees="${(t.assignees || []).join(',')}"
+                          style="left:${sOff * dayWidth}px; width:${barW}px; top:${rowTop + 5}px; height:26px; background:${color};"
+                          onmousedown="ganttBarMousedown(event, 'move')"
+                          ondblclick="openGanttTaskModal('${t.task_id}', '${row.assetId}')"
+                     >
                         ${barW > 50 ? `<span>${label}</span>` : ''}
                         <div class="gantt-bar-handle" onmousedown="ganttBarMousedown(event, 'resize')"></div>
                     </div>`;
@@ -1278,8 +1312,8 @@ function renderGantt() {
     });
 
     barsArea.style.height = totalRowsHeight + 'px';
-    barsArea.style.width  = totalWidth + 'px';
-    sidebar.innerHTML  = sidebarHtml;
+    barsArea.style.width = totalWidth + 'px';
+    sidebar.innerHTML = sidebarHtml;
     barsArea.innerHTML = barsHtml;
 }
 
@@ -1301,8 +1335,8 @@ function ganttBarMousedown(e, mode) {
     const bar = mode === 'resize' ? e.currentTarget.parentElement : e.currentTarget;
     if (!bar.dataset.taskId) return;
 
-    const startX    = e.clientX;
-    const origLeft  = parseInt(bar.style.left);
+    const startX = e.clientX;
+    const origLeft = parseInt(bar.style.left);
     const origWidth = parseInt(bar.style.width);
 
     bar.classList.add('dragging');
@@ -1312,17 +1346,17 @@ function ganttBarMousedown(e, mode) {
     tooltip.style.display = 'block';
 
     document.addEventListener('mousemove', _ganttOnMousemove);
-    document.addEventListener('mouseup',   _ganttOnMouseup, { once: true });
+    document.addEventListener('mouseup', _ganttOnMouseup, { once: true });
 }
 
 function _ganttOnMousemove(e) {
     if (!_ganttDrag) return;
     const { bar, mode, startX, origLeft, origWidth } = _ganttDrag;
     const { dayWidth } = ganttState;
-    const dx    = e.clientX - startX;
+    const dx = e.clientX - startX;
     const dDays = Math.round(dx / dayWidth);
 
-    let newLeft  = origLeft;
+    let newLeft = origLeft;
     let newWidth = origWidth;
 
     if (mode === 'move') {
@@ -1335,14 +1369,21 @@ function _ganttOnMousemove(e) {
 
     // Update tooltip
     const startOff = Math.round(newLeft / dayWidth);
-    const endOff   = mode === 'move' ? startOff + Math.round(origWidth / dayWidth) - 1
-                                     : Math.round(newLeft / dayWidth) + Math.round(newWidth / dayWidth) - 1;
+    const endOff = mode === 'move' ? startOff + Math.round(origWidth / dayWidth) - 1
+        : Math.round(newLeft / dayWidth) + Math.round(newWidth / dayWidth) - 1;
     const startDate = ganttDateAtOffset(startOff);
-    const endDate   = ganttDateAtOffset(endOff);
-    const tooltip   = ganttGetTooltip();
-    tooltip.innerHTML = `<b>${bar.querySelector('span') ? bar.querySelector('span').textContent : 'Task'}</b><br>${ganttDateToISO(startDate)} → ${ganttDateToISO(endDate)}`;
+    const endDate = ganttDateAtOffset(endOff);
+    const tooltip = ganttGetTooltip();
+    const assignees = bar.dataset.assignees ? bar.dataset.assignees.split(',').filter(Boolean) : [];
+    const assigneeHtml = assignees.length ? `<div class="gantt-tooltip-assignees">${assignees.map(a => `<span class="gantt-tag">${a}</span>`).join('')}</div>` : '';
+    
+    tooltip.innerHTML = `
+        <div style="font-weight:700; margin-bottom:4px;">${bar.querySelector('span')?.textContent || 'Task'}</div>
+        <div style="opacity:0.8;">${ganttDateToISO(startDate)} → ${ganttDateToISO(endDate)}</div>
+        ${assigneeHtml}
+    `;
     tooltip.style.left = (e.clientX + 12) + 'px';
-    tooltip.style.top  = (e.clientY - 10) + 'px';
+    tooltip.style.top = (e.clientY - 10) + 'px';
 }
 
 async function _ganttOnMouseup(e) {
@@ -1353,17 +1394,17 @@ async function _ganttOnMouseup(e) {
     document.removeEventListener('mousemove', _ganttOnMousemove);
 
     const { dayWidth, projectName } = ganttState;
-    const newLeft  = parseInt(bar.style.left);
+    const newLeft = parseInt(bar.style.left);
     const newWidth = parseInt(bar.style.width);
     const startOff = Math.round(newLeft / dayWidth);
-    const endOff   = mode === 'move'
+    const endOff = mode === 'move'
         ? startOff + Math.round(origWidth / dayWidth) - 1
         : Math.round(newLeft / dayWidth) + Math.round(newWidth / dayWidth) - 1;
 
     const newStart = ganttDateToISO(ganttDateAtOffset(startOff));
-    const newEnd   = ganttDateToISO(ganttDateAtOffset(endOff));
-    const taskId   = bar.dataset.taskId;
-    const assetId  = bar.dataset.assetId;
+    const newEnd = ganttDateToISO(ganttDateAtOffset(endOff));
+    const taskId = bar.dataset.taskId;
+    const assetId = bar.dataset.assetId;
 
     // Optimistic update state
     const asset = ganttState.assets.find(a => a.id === assetId);
@@ -1371,12 +1412,12 @@ async function _ganttOnMouseup(e) {
         const task = asset.tasks.find(t => t.task_id === taskId);
         if (task) {
             task.start = newStart;
-            task.end   = newEnd;
+            task.end = newEnd;
             // Recalculate asset summary
             const starts = asset.tasks.map(t => t.start).filter(Boolean).sort();
-            const ends   = asset.tasks.map(t => t.end).filter(Boolean).sort();
+            const ends = asset.tasks.map(t => t.end).filter(Boolean).sort();
             asset.assetStart = starts[0] || null;
-            asset.assetEnd   = ends[ends.length - 1] || null;
+            asset.assetEnd = ends[ends.length - 1] || null;
         }
     }
 
@@ -1413,12 +1454,96 @@ function ganttGetTooltip() {
 
 function setGanttView(mode) {
     ganttState.viewMode = mode;
-    const widths = { week: 48, month: 28, quarter: 16 };
-    ganttState.dayWidth = widths[mode] || 28;
-    document.querySelectorAll('.gantt-view-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById(`gantt-view-${mode}`);
-    if (btn) btn.classList.add('active');
+    const widths = { week: 100, month: 48, quarter: 32 };
+    ganttState.dayWidth = widths[mode] || 48;
+
+    document.querySelectorAll('.gantt-view-btn').forEach(b => {
+        b.classList.toggle('active', b.textContent.toLowerCase().includes(mode));
+    });
     renderGantt();
+}
+
+/* ---- Task Properties Modal ---- */
+function openGanttTaskModal(taskId, assetId) {
+    const asset = ganttState.assets.find(a => a.id === assetId);
+    if (!asset) return;
+    const task = asset.tasks.find(t => t.task_id === taskId);
+    if (!task) return;
+
+    document.getElementById('gantt-modal-task-id').value = taskId;
+    document.getElementById('gantt-modal-task-name').value = `${asset.name} / ${task.task_name}`;
+
+    // Status Select
+    const statusSelect = document.getElementById('gantt-modal-status');
+    statusSelect.innerHTML = Object.keys(STATUS_COLORS).filter(s => s !== 'default').map(s =>
+        `<option value="${s}" ${task.status.toLowerCase() === s ? 'selected' : ''}>${s.toUpperCase()}</option>`
+    ).join('');
+
+    // Dates
+    document.getElementById('gantt-modal-start').value = task.start || '';
+    document.getElementById('gantt-modal-end').value = task.end || '';
+
+    // Assignees
+    const artistSelect = document.getElementById('gantt-modal-assignees');
+    const projectUsers = ganttState.projectUsers || [];
+    artistSelect.innerHTML = projectUsers.map(u =>
+        `<option value="${u}" ${(task.assignees || []).includes(u) ? 'selected' : ''}>${u}</option>`
+    ).join('');
+
+    document.getElementById('gantt-task-modal').style.display = 'flex';
+}
+
+function closeGanttTaskModal() {
+    document.getElementById('gantt-task-modal').style.display = 'none';
+}
+
+async function saveGanttTaskProperties() {
+    const taskId = document.getElementById('gantt-modal-task-id').value;
+    const status = document.getElementById('gantt-modal-status').value;
+    const start = document.getElementById('gantt-modal-start').value;
+    const end = document.getElementById('gantt-modal-end').value;
+
+    const assigneeSelect = document.getElementById('gantt-modal-assignees');
+    const assignees = Array.from(assigneeSelect.selectedOptions).map(o => o.value);
+
+    try {
+        const resp = await fetch('/api/metrics/planner/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_name: ganttState.projectName,
+                task_id: taskId,
+                start_date: start,
+                end_date: end,
+                status: status,
+                assignees: assignees
+            })
+        });
+
+        if (resp.ok) {
+            // Update local state
+            ganttState.assets.forEach(a => {
+                const t = a.tasks.find(tk => tk.task_id === taskId);
+                if (t) {
+                    t.status = status;
+                    t.start = start || null;
+                    t.end = end || null;
+                    t.assignees = assignees;
+                }
+            });
+            closeGanttTaskModal();
+            renderGantt();
+
+            const indicator = document.getElementById('gantt-save-indicator');
+            if (indicator) {
+                indicator.style.opacity = '1';
+                setTimeout(() => indicator.style.opacity = '0', 2000);
+            }
+        }
+    } catch (err) {
+        console.error("Failed to save task properties:", err);
+        alert("Persistence failed. See console.");
+    }
 }
 
 function toggleLifecycleTaskDropdown() {
@@ -1436,7 +1561,7 @@ function rebuildLifecycleKanban() {
         if (col === 'Asset Initialization') return true;
         const cb = filterContainer && filterContainer.querySelector(`input[value="${col}"]`);
         return cb ? cb.checked : isActiveCol(col);
-    }).sort((a,b) => {
+    }).sort((a, b) => {
         if (a === 'Asset Initialization') return -1;
         if (b === 'Asset Initialization') return 1;
         return a.localeCompare(b);
@@ -1451,8 +1576,8 @@ function rebuildLifecycleKanban() {
 
         columns[col].forEach(t => {
             const dateObj = new Date(t.date);
-            const dateOnly = dateObj.toLocaleDateString([], {month:'short', day:'numeric'});
-            const timeOnly = dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            const dateOnly = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            const timeOnly = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             let statusColor = '#9e9e9e';
             let titleHtml = '';
             let extraParams = '';
@@ -1474,7 +1599,7 @@ function rebuildLifecycleKanban() {
                 const safeComment = encodeURIComponent(t.comment || "");
                 const safeTask = encodeURIComponent(t.task || "");
                 const safeAuthor = encodeURIComponent(t.author || "");
-                extraParams = `style="cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.3);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'" onclick="openPublishDetails('${safeTask}','${t.version||''}','${safeComment}','${safeAuthor}','${t.date}','${t.folder_id}')"`;
+                extraParams = `style="cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.3);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'" onclick="openPublishDetails('${safeTask}','${t.version || ''}','${safeComment}','${safeAuthor}','${t.date}','${t.folder_id}')"`;
             }
 
             html += `
@@ -1504,4 +1629,16 @@ function rebuildLifecycleKanban() {
 
     html += `</div>`;
     document.getElementById('lifecycle-timeline').innerHTML = html;
+}
+
+function scrollToGanttToday() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const offset = ganttOffsetOfDate(ganttDateToISO(today));
+    if (offset !== null) {
+        const wrap = document.getElementById('gantt-timeline-wrap');
+        if (wrap) {
+            wrap.scrollLeft = offset * ganttState.dayWidth - 200;
+        }
+    }
 }
