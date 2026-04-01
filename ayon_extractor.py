@@ -390,3 +390,149 @@ class AyonDataExtractor:
         except Exception as e:
             logger.error(f"Error fetching users for {project_name}: {e}")
             return []
+
+    def get_project_statuses(self, project_name: str) -> list:
+        """
+        Returns ALL statuses defined in the project anatomy schema.
+        This is intentionally NOT cached so it always reflects the live schema,
+        fixing the bug where the bulk-edit dropdown only showed statuses present
+        on currently-existing tasks rather than the full studio-configured list.
+        """
+        try:
+            project_info = self.api.get_project(project_name)
+            if project_info and "statuses" in project_info:
+                return [
+                    {
+                        "name": s["name"],
+                        "color": s.get("color", "#aaaaaa"),
+                        "shortName": s.get("shortName", ""),
+                        "icon": s.get("icon", ""),
+                        "state": s.get("state", ""),
+                    }
+                    for s in project_info["statuses"]
+                    if "name" in s
+                ]
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching statuses for {project_name}: {e}", exc_info=True)
+            return []
+
+    def get_task_latest_version_media(self, project_name: str, task_id: str) -> dict:
+        """
+        Returns the resolved file path of the most recent published review media (.mp4)
+        for the given task, plus version metadata for display in the Reviewer tab.
+        """
+        try:
+            versions = sorted(
+                list(self.api.get_versions(
+                    project_name,
+                    task_ids=[task_id],
+                    fields=["id", "version", "taskId", "author", "createdAt"]
+                )),
+                key=lambda v: v.get("version", 0),
+                reverse=True
+            )
+            if not versions:
+                return {"path": None, "version": None}
+
+            latest = versions[0]
+            version_id = latest["id"]
+
+            repres = list(self.api.get_representations(
+                project_name,
+                version_ids=[version_id],
+                fields=["id", "name", "files", "attrib"]
+            ))
+
+            # Prefer named review/h264 representations first, then fall back to any .mp4
+            preferred = {"review", "h264", "mp4", "preview", "burnin"}
+            for priority in (True, False):
+                for repre in repres:
+                    is_preferred = repre.get("name", "").lower() in preferred
+                    if priority != is_preferred:
+                        continue
+                    for f in repre.get("files", []):
+                        path = f.get("path", "")
+                        if path.lower().endswith(".mp4"):
+                            return {
+                                "path": path,
+                                "version": latest.get("version"),
+                                "version_id": version_id,
+                                "author": latest.get("author"),
+                            }
+
+            return {"path": None, "version": latest.get("version"), "version_id": version_id}
+        except Exception as e:
+            logger.error(f"Error fetching media for task {task_id}: {e}", exc_info=True)
+            return {"path": None, "error": str(e)}
+
+    def post_review_annotation(
+        self,
+        project_name: str,
+        task_id: str,
+        image_bytes: bytes,
+        note: str,
+        frame_time: str,
+    ) -> dict:
+        """
+        Two-phase Ayon activity post:
+          1. Upload the composite PNG to /api/projects/{project}/files → receive file_id.
+          2. POST a 'comment' activity that embeds the image via Markdown and attaches
+             the file_id so it renders inline in the Ayon web feed.
+
+        Uses direct HTTP calls (via requests) because ayon-python-api does not expose
+        a multipart file-upload helper or the activities REST surface.
+        """
+        import io
+        import requests as _requests
+
+        base_url = os.getenv("AYON_SERVER_URL", "http://ayon:5000/").rstrip("/")
+        token = os.getenv("AYON_API_TOKEN", "")
+        auth_headers = {"Authorization": f"Bearer {token}"}
+
+        # ── Step 1: Upload the annotation PNG ────────────────────────────────
+        file_id: Optional[str] = None
+        try:
+            upload_resp = _requests.post(
+                f"{base_url}/api/projects/{project_name}/files",
+                headers=auth_headers,
+                files={"file": ("annotation.png", io.BytesIO(image_bytes), "image/png")},
+                timeout=30,
+            )
+            upload_resp.raise_for_status()
+            file_id = upload_resp.json().get("id")
+            logger.info(f"Annotation image uploaded → file_id={file_id}")
+        except Exception as e:
+            # Non-fatal: we still post the text note even if upload fails.
+            logger.error(f"Annotation file upload failed: {e}", exc_info=True)
+
+        # ── Step 2: Build the Markdown comment body ──────────────────────────
+        # Timecode line uses the frame_time passed from the frontend (stored at
+        # freeze-click time — see Bug 2 fix in main.js reviewerFreezeFrame).
+        timecode_md = f"\n\n**Frame Time:** `{frame_time}`" if frame_time else ""
+        img_md = ""
+        if file_id:
+            img_md = f"\n\n![Annotation](/api/projects/{project_name}/files/{file_id})"
+
+        body = f"{(note or '').strip()}{timecode_md}{img_md}".strip()
+
+        # ── Step 3: Post the activity/comment ────────────────────────────────
+        try:
+            activity_payload: Dict[str, Any] = {
+                "activityType": "comment",
+                "body": body,
+            }
+            if file_id:
+                activity_payload["files"] = [file_id]
+
+            act_resp = _requests.post(
+                f"{base_url}/api/projects/{project_name}/tasks/{task_id}/activities",
+                headers={**auth_headers, "Content-Type": "application/json"},
+                json=activity_payload,
+                timeout=30,
+            )
+            act_resp.raise_for_status()
+            return {"status": "ok", "activity_id": act_resp.json().get("id"), "file_id": file_id}
+        except Exception as e:
+            logger.error(f"Activity post failed: {e}", exc_info=True)
+            return {"status": "error", "detail": str(e)}
