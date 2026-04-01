@@ -21,6 +21,7 @@
                 <button class="tab-btn" onclick="switchTab('planner')">Planner</button>
                 <button class="tab-btn" onclick="switchTab('artists')">Artist Telemetry</button>
                 <button class="tab-btn" onclick="switchTab('daily')">Day Report</button>
+                <button class="tab-btn" onclick="switchTab('reviewer')">Reviewer</button>
             </div>
         </div>
         <div id="project-health-summary">Loading Connection...</div>
@@ -202,6 +203,127 @@
                 </div>
             </div>
             <div id="daily-report-container" class="report-container"></div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- REVIEWER TAB                                                     -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <section id="tab-reviewer" class="view-section" style="display: none;">
+            <!-- Controls bar: project + task loader -->
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label>Project</label>
+                    <select id="reviewer-project-selector" class="premium-input"></select>
+                </div>
+                <div class="control-group">
+                    <label>Task ID</label>
+                    <input type="text" id="reviewer-task-id" class="premium-input" placeholder="Paste Ayon Task ID…" style="width: 280px;">
+                </div>
+                <div class="control-group">
+                    <label>&nbsp;</label>
+                    <button class="action-btn" onclick="loadReviewerMedia()">Load Latest Media</button>
+                </div>
+                <div id="reviewer-version-badge" class="control-group" style="display:none;">
+                    <label>Loaded</label>
+                    <span id="reviewer-version-display" style="font-weight:700; color:var(--accent-teal); font-size:1rem;"></span>
+                </div>
+            </div>
+
+            <!-- Main reviewer layout -->
+            <div style="display:flex; flex:1; gap:16px; padding:16px; overflow:hidden; min-height:0;">
+
+                <!-- Left column: video + canvas + drawing toolbar -->
+                <div style="flex:1; display:flex; flex-direction:column; gap:12px; min-width:0;">
+
+                    <!-- Video / Canvas composite -->
+                    <div id="reviewer-video-container"
+                         style="position:relative; background:#000; border-radius:8px; overflow:hidden;
+                                aspect-ratio:16/9; width:100%; border:1px solid var(--panel-border);">
+                        <video id="reviewer-video"
+                               style="width:100%; height:100%; display:block; object-fit:contain;"
+                               preload="metadata" controls
+                               onerror="reviewerHandleVideoError()">
+                        </video>
+                        <!-- Canvas sits above the video; hidden until Freeze is clicked -->
+                        <canvas id="reviewer-canvas"
+                                style="position:absolute; top:0; left:0; width:100%; height:100%;
+                                       display:none; cursor:crosshair; touch-action:none;">
+                        </canvas>
+                    </div>
+
+                    <!-- Drawing toolbar — shown only while annotating -->
+                    <div id="reviewer-toolbar"
+                         style="display:none; background:var(--bg-secondary); border-radius:8px;
+                                padding:10px 16px; border:1px solid var(--panel-border);
+                                align-items:center; gap:16px; flex-wrap:wrap;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label style="font-size:0.8rem; color:var(--text-secondary);">Colour</label>
+                            <input type="color" id="reviewer-pen-color" value="#ff3b3b"
+                                   style="width:34px; height:26px; border:none; border-radius:4px;
+                                          cursor:pointer; padding:0; background:transparent;">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label style="font-size:0.8rem; color:var(--text-secondary);">Size</label>
+                            <input type="range" id="reviewer-pen-size" min="1" max="24" value="4"
+                                   style="width:80px;">
+                            <span id="reviewer-pen-size-label"
+                                  style="font-size:0.8rem; color:var(--text-secondary); width:18px;">4</span>
+                        </div>
+                        <div style="width:1px; height:26px; background:var(--panel-border);"></div>
+                        <button class="action-btn"
+                                style="padding:5px 12px; font-size:0.8rem; background:transparent;
+                                       border:1px solid var(--panel-border);"
+                                onclick="reviewerClearCanvas()">Clear</button>
+                        <button class="action-btn"
+                                style="padding:5px 12px; font-size:0.8rem; background:var(--accent-teal);"
+                                onclick="reviewerUnfreeze()">Resume Playback</button>
+                        <span id="reviewer-timecode-display"
+                              style="margin-left:auto; font-size:0.85rem; font-weight:700;
+                                     color:var(--accent-teal); font-family:monospace;"></span>
+                    </div>
+                </div>
+
+                <!-- Right column: freeze button + note + publish -->
+                <div style="width:300px; flex-shrink:0; display:flex; flex-direction:column; gap:12px;">
+
+                    <!-- Freeze panel -->
+                    <div style="background:var(--bg-secondary); border-radius:8px; padding:16px;
+                                border:1px solid var(--panel-border);">
+                        <h3 style="margin:0 0 10px; font-size:0.95rem; color:var(--text-primary);">
+                            Annotation Controls
+                        </h3>
+                        <p style="font-size:0.8rem; color:var(--text-secondary); margin:0 0 12px; line-height:1.5;">
+                            Scrub or pause the video on the frame you want to mark up, then click
+                            <strong>Freeze Frame</strong> to begin drawing.
+                        </p>
+                        <button id="reviewer-freeze-btn" class="action-btn"
+                                style="width:100%; background:var(--accent-blue); padding:12px;"
+                                onclick="reviewerFreezeFrame()">
+                            Freeze Frame &amp; Annotate
+                        </button>
+                    </div>
+
+                    <!-- Note + publish panel -->
+                    <div style="background:var(--bg-secondary); border-radius:8px; padding:16px;
+                                border:1px solid var(--panel-border); flex:1;
+                                display:flex; flex-direction:column; gap:12px;">
+                        <h3 style="margin:0; font-size:0.95rem; color:var(--text-primary);">Review Note</h3>
+                        <textarea id="reviewer-note" class="premium-input"
+                                  style="flex:1; min-height:100px; resize:vertical;
+                                         font-size:0.9rem; line-height:1.5;"
+                                  placeholder="Describe the correction needed…"></textarea>
+                        <button class="action-btn"
+                                style="background:var(--accent-green); padding:13px; font-size:0.95rem;"
+                                onclick="reviewerPublish()">
+                            Publish to Ayon Feed
+                        </button>
+                        <div id="reviewer-publish-status"
+                             style="display:none; font-size:0.8rem; text-align:center;
+                                    padding:8px; border-radius:6px; background:rgba(0,0,0,0.3);">
+                        </div>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
 

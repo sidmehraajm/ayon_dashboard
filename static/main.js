@@ -88,6 +88,9 @@ async function loadProjects() {
         const plannerSelector = document.getElementById('planner-project-selector');
         if (plannerSelector) plannerSelector.innerHTML = assetHtml;
 
+        const reviewerSelector = document.getElementById('reviewer-project-selector');
+        if (reviewerSelector) reviewerSelector.innerHTML = assetHtml;
+
         if (allProjects.length > 0) {
             loadTrackingData(allProjects[0]);
             assetSelector.addEventListener("change", (e) => loadTrackingData(e.target.value));
@@ -118,11 +121,24 @@ let currentTrackingStatuses = []; // Store official project statuses
 async function loadTrackingData(projectName) {
     document.getElementById("project-health-summary").innerText = "Establishing secure connection...";
     try {
-        const response = await fetch(`/api/metrics/tracking/${projectName}`);
-        const payload = await response.json();
+        // Bug 3 fix: fetch the full anatomy schema statuses in parallel with tracking data.
+        // The tracking endpoint's all_statuses only contains statuses present on CURRENT tasks
+        // (plus whatever get_project() returns inside the cached call). The dedicated /statuses
+        // endpoint is un-cached and always returns the complete studio-configured list.
+        const [trackingResp, statusResp] = await Promise.all([
+            fetch(`/api/metrics/tracking/${projectName}`),
+            fetch(`/api/projects/${projectName}/statuses`),
+        ]);
+
+        const payload = await trackingResp.json();
+        const statusSchema = await statusResp.json();
 
         globalRawTrackingData = payload.tracking_data;
-        currentTrackingStatuses = payload.all_statuses; // The official statuses from Ayon
+
+        // Prefer the dedicated schema endpoint; fall back to the tracking payload.
+        currentTrackingStatuses = (statusSchema && statusSchema.length > 0)
+            ? statusSchema.map(s => s.name)
+            : payload.all_statuses;
 
         populateAssetSearchDropdown();
         buildStatusCheckboxes();
@@ -1640,5 +1656,285 @@ function scrollToGanttToday() {
         if (wrap) {
             wrap.scrollLeft = offset * ganttState.dayWidth - 200;
         }
+    }
+}
+
+// =============================================================================
+// REVIEWER TAB  (Bugs 1, 2, 3 — annotation, timecode, statuses)
+// =============================================================================
+
+/**
+ * Shared state for the reviewer.  Using a plain object keeps all reviewer
+ * variables in one place and avoids polluting the global namespace.
+ *
+ * frozenTime (Bug 2 fix): captured at the exact moment the user clicks
+ * "Freeze Frame", NOT read lazily when the publish button is pressed.
+ * Reading video.currentTime after pause() is unreliable in some browsers
+ * because the element may report 0 if the seek hasn't been committed yet.
+ */
+const reviewer = {
+    projectName: null,
+    taskId: null,
+    frozenTime: null,   // seconds — set in reviewerFreezeFrame(), used in reviewerPublish()
+    isAnnotating: false,
+    isDrawing: false,
+    lastX: 0,
+    lastY: 0,
+    ctx: null,
+};
+
+// ── Media loader ─────────────────────────────────────────────────────────────
+
+function loadReviewerMedia() {
+    const projectName = document.getElementById('reviewer-project-selector').value;
+    const taskId      = document.getElementById('reviewer-task-id').value.trim();
+
+    if (!projectName || !taskId) {
+        alert('Select a project and enter a Task ID first.');
+        return;
+    }
+
+    reviewer.projectName = projectName;
+    reviewer.taskId      = taskId;
+    reviewer.frozenTime  = null;
+
+    const statusDiv = document.getElementById('reviewer-publish-status');
+    statusDiv.style.display = 'block';
+    statusDiv.style.color   = 'var(--text-secondary)';
+    statusDiv.textContent   = 'Querying Ayon for latest media…';
+
+    fetch(`/api/review/media/${projectName}/${taskId}`)
+        .then(r => r.json())
+        .then(data => {
+            statusDiv.style.display = 'none';
+            if (!data.path) {
+                alert('No .mp4 review media found for this task.\nCheck that a version with a review/h264 representation exists.');
+                return;
+            }
+
+            const video       = document.getElementById('reviewer-video');
+            const badge       = document.getElementById('reviewer-version-badge');
+            const versionText = document.getElementById('reviewer-version-display');
+
+            // Stream the file through the FastAPI 206 proxy
+            video.src = `/api/review/stream?path=${encodeURIComponent(data.path)}`;
+            video.load();
+
+            const ver = String(data.version || 1).padStart(3, '0');
+            versionText.textContent = `v${ver}  ·  ${data.author || ''}`;
+            badge.style.display = '';
+
+            // Reset annotation state on new media load
+            reviewerUnfreeze();
+        })
+        .catch(err => {
+            statusDiv.style.display = 'none';
+            console.error('Reviewer media load failed:', err);
+            alert('Failed to fetch media info — see browser console for details.');
+        });
+}
+
+function reviewerHandleVideoError() {
+    const video = document.getElementById('reviewer-video');
+    if (video.src && video.src !== window.location.href) {
+        console.error('Reviewer video error:', video.error);
+    }
+}
+
+// ── Freeze / unfreeze ─────────────────────────────────────────────────────────
+
+function reviewerFreezeFrame() {
+    const video = document.getElementById('reviewer-video');
+
+    if (!video.src || video.readyState < 1) {
+        alert('Load a media file first.');
+        return;
+    }
+
+    // ── Bug 2 fix ────────────────────────────────────────────────────────────
+    // Capture currentTime BEFORE calling pause().  After pause() the browser
+    // may still be seeking and currentTime can momentarily report 0.
+    reviewer.frozenTime = video.currentTime;
+    video.pause();
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const canvas = document.getElementById('reviewer-canvas');
+
+    // Match canvas resolution to the video's native pixel dimensions so
+    // drawImage() produces a crisp full-resolution capture.
+    canvas.width  = video.videoWidth  || 1920;
+    canvas.height = video.videoHeight || 1080;
+
+    reviewer.ctx = canvas.getContext('2d');
+    reviewer.ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.style.display = 'block';
+    reviewer.isAnnotating = true;
+
+    // Attach pointer-event handlers
+    canvas.onmousedown  = _reviewerPointerDown;
+    canvas.onmousemove  = _reviewerPointerMove;
+    canvas.onmouseup    = _reviewerPointerUp;
+    canvas.onmouseleave = _reviewerPointerUp;
+
+    // Show toolbar and print the captured timecode
+    const toolbar = document.getElementById('reviewer-toolbar');
+    toolbar.style.display = 'flex';
+    document.getElementById('reviewer-timecode-display').textContent =
+        `Frozen at ${_reviewerFmtTimecode(reviewer.frozenTime)}`;
+
+    // Live pen-size label
+    const sizeInput = document.getElementById('reviewer-pen-size');
+    const sizeLabel = document.getElementById('reviewer-pen-size-label');
+    sizeLabel.textContent = sizeInput.value;
+    sizeInput.oninput = () => { sizeLabel.textContent = sizeInput.value; };
+}
+
+function reviewerUnfreeze() {
+    const canvas  = document.getElementById('reviewer-canvas');
+    const toolbar = document.getElementById('reviewer-toolbar');
+
+    canvas.style.display  = 'none';
+    toolbar.style.display = 'none';
+    reviewer.isAnnotating = false;
+    reviewer.isDrawing    = false;
+
+    canvas.onmousedown  = null;
+    canvas.onmousemove  = null;
+    canvas.onmouseup    = null;
+    canvas.onmouseleave = null;
+
+    if (reviewer.ctx) {
+        reviewer.ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    // Note: frozenTime is intentionally preserved here so that if the user
+    // unfreezes and then immediately publishes, the correct timecode is used.
+}
+
+function reviewerClearCanvas() {
+    if (!reviewer.ctx) return;
+    const canvas = document.getElementById('reviewer-canvas');
+    const video  = document.getElementById('reviewer-video');
+    // Wipe drawings and re-stamp the frozen frame underneath
+    reviewer.ctx.clearRect(0, 0, canvas.width, canvas.height);
+    reviewer.ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+}
+
+// ── Drawing internals ─────────────────────────────────────────────────────────
+
+function _reviewerPointerDown(e) {
+    reviewer.isDrawing = true;
+    const p = _reviewerCanvasPos(e);
+    reviewer.lastX = p.x;
+    reviewer.lastY = p.y;
+}
+
+function _reviewerPointerMove(e) {
+    if (!reviewer.isDrawing || !reviewer.ctx) return;
+    const p     = _reviewerCanvasPos(e);
+    const color = document.getElementById('reviewer-pen-color').value;
+    const size  = parseInt(document.getElementById('reviewer-pen-size').value, 10);
+
+    reviewer.ctx.beginPath();
+    reviewer.ctx.moveTo(reviewer.lastX, reviewer.lastY);
+    reviewer.ctx.lineTo(p.x, p.y);
+    reviewer.ctx.strokeStyle = color;
+    reviewer.ctx.lineWidth   = size;
+    reviewer.ctx.lineCap     = 'round';
+    reviewer.ctx.lineJoin    = 'round';
+    reviewer.ctx.stroke();
+
+    reviewer.lastX = p.x;
+    reviewer.lastY = p.y;
+}
+
+function _reviewerPointerUp() {
+    reviewer.isDrawing = false;
+}
+
+/** Converts a mouse event's viewport coordinates into canvas-space pixels. */
+function _reviewerCanvasPos(e) {
+    const canvas = document.getElementById('reviewer-canvas');
+    const rect   = canvas.getBoundingClientRect();
+    return {
+        x: (e.clientX - rect.left)  * (canvas.width  / rect.width),
+        y: (e.clientY - rect.top)   * (canvas.height / rect.height),
+    };
+}
+
+/** Formats raw seconds as M:SS for display and for the Ayon comment body. */
+function _reviewerFmtTimecode(seconds) {
+    if (seconds === null || seconds === undefined || isNaN(seconds)) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ── Publish ───────────────────────────────────────────────────────────────────
+
+async function reviewerPublish() {
+    if (!reviewer.projectName || !reviewer.taskId) {
+        alert('No task loaded — use "Load Latest Media" first.');
+        return;
+    }
+
+    const canvas    = document.getElementById('reviewer-canvas');
+    const video     = document.getElementById('reviewer-video');
+    const note      = document.getElementById('reviewer-note').value.trim();
+    const statusDiv = document.getElementById('reviewer-publish-status');
+
+    // ── Bug 2 fix ────────────────────────────────────────────────────────────
+    // Always use the stored reviewer.frozenTime, never video.currentTime here.
+    // If the user never froze the video, reviewer.frozenTime is null → "0:00".
+    const frameTime = _reviewerFmtTimecode(reviewer.frozenTime);
+    // ─────────────────────────────────────────────────────────────────────────
+
+    statusDiv.style.display     = 'block';
+    statusDiv.style.color       = 'var(--text-secondary)';
+    statusDiv.textContent       = 'Compositing frame + annotations…';
+
+    // ── Bug 1 fix ────────────────────────────────────────────────────────────
+    // Export the canvas (which contains the stamped video frame AND the drawn
+    // annotations on top) as a PNG blob.  If the user never froze the video,
+    // stamp the current video frame onto a temporary canvas first.
+    let imageBlob;
+    if (reviewer.isAnnotating && canvas.style.display !== 'none') {
+        // Canvas already has the frozen frame + drawings
+        imageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    } else {
+        // Capture the current video frame without annotations
+        const tmp = document.createElement('canvas');
+        tmp.width  = video.videoWidth  || 1920;
+        tmp.height = video.videoHeight || 1080;
+        tmp.getContext('2d').drawImage(video, 0, 0, tmp.width, tmp.height);
+        imageBlob = await new Promise(resolve => tmp.toBlob(resolve, 'image/png'));
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const formData = new FormData();
+    formData.append('project_name', reviewer.projectName);
+    formData.append('task_id',      reviewer.taskId);
+    formData.append('note',         note);
+    formData.append('frame_time',   frameTime);      // exact frozen timecode
+    formData.append('image',        imageBlob, 'annotation.png');
+
+    statusDiv.textContent = 'Uploading to Ayon…';
+
+    try {
+        const resp   = await fetch('/api/review/annotate', { method: 'POST', body: formData });
+        const result = await resp.json();
+
+        if (resp.ok && result.status === 'ok') {
+            statusDiv.style.color = '#10b981';
+            statusDiv.textContent = `Published ✓  Activity: ${result.activity_id || 'OK'}  |  File: ${result.file_id || 'n/a'}`;
+            document.getElementById('reviewer-note').value = '';
+        } else {
+            statusDiv.style.color = '#ef4444';
+            statusDiv.textContent = `Error: ${result.detail || JSON.stringify(result)}`;
+        }
+    } catch (err) {
+        statusDiv.style.color = '#ef4444';
+        statusDiv.textContent = `Network error: ${err.message}`;
+        console.error('Reviewer publish failed:', err);
     }
 }
